@@ -39,6 +39,15 @@ function requireRefOrPin(ref?: string, pin?: string): ToolResult | null {
   return null;
 }
 
+/**
+ * Parse a tab reference copied from the popup. Accepts the bare
+ * browser-mcp://tab/<id>?key=<key> or any text that contains one.
+ */
+export function parseTabRef(text: string): { tabId: number; key: string } | null {
+  const m = /browser-mcp:\/\/tab\/(\d+)\?key=([0-9a-f]+)/i.exec(text);
+  return m ? { tabId: Number(m[1]), key: m[2]!.toLowerCase() } : null;
+}
+
 /** Sent to clients at initialize; agents see it when choosing tools. */
 export const SERVER_INSTRUCTIONS = `Controls the user's real Google Chrome (their profile, logins and cookies) through the browser-mcp extension.
 
@@ -55,6 +64,7 @@ Secrets: never ask the user to paste a password, OTP, API key or other secret in
 
 Etiquette:
 - Each MCP session controls its own tab, marked in Chrome with a coloured tab group and border. browser_open replaces your previous tab; other sessions' tabs are not yours.
+- If the user pastes a tab reference (browser-mcp://tab/<id>?key=<key>, from the extension popup's Copy reference), call browser_connect_tab({ref}) right away: it takes that tab with no prompt.
 - To work in a tab the user already has open, call browser_tabs({includeOthers:true}) then browser_connect_tab(tabId). The first time you take a tab on a site, the user is asked once in a Chrome notification (60s); after Allow, tabs on that site are free. Taking a tab another session controls always asks.
 - Screenshots need the tab in front (open with active:true).
 - Call browser_disconnect when you are done with the browser.
@@ -75,18 +85,36 @@ export function createMcpServer(): McpServer {
 
   server.tool(
     "browser_connect_tab",
-    "Take over an existing Chrome tab (id from browser_tabs includeOthers) as this session's Connected tab; replaces this session's previous Connected tab. Asks the user in a Chrome notification the first time an agent takes a tab on that site, and always when another session controls the tab.",
-    { tabId: z.number().int().describe("Tab id from browser_tabs") },
-    async ({ tabId }) =>
-      wrap(async () =>
-        textResult(
-          await callExt(
-            "tabs.connect",
-            { tabId },
-            CONSENT_TIMEOUT_MS + 5_000,
-          ),
-        ),
-      ),
+    "Take over an existing Chrome tab as this session's Connected tab; replaces this session's previous Connected tab. Pass either a tabId (from browser_tabs includeOthers) or a ref the user pasted (browser-mcp://tab/<id>?key=<key>, from the popup's Copy reference). With a ref there is no prompt. With a tabId, the user is asked in a Chrome notification the first time an agent takes a tab on that site, and always when another session controls the tab.",
+    {
+      tabId: z.number().int().optional().describe("Tab id from browser_tabs"),
+      ref: z
+        .string()
+        .optional()
+        .describe("Tab reference the user pasted: browser-mcp://tab/<id>?key=<key>"),
+    },
+    async ({ tabId, ref }) =>
+      wrap(async () => {
+        const params: Record<string, unknown> = {};
+        if (ref) {
+          const parsed = parseTabRef(ref);
+          if (!parsed) {
+            return errorResult(
+              ErrorCodes.INVALID_REF,
+              "Not a tab reference. Expected browser-mcp://tab/<id>?key=<key> from the browser-mcp popup's Copy reference.",
+            );
+          }
+          params.tabId = parsed.tabId;
+          params.refKey = parsed.key;
+        } else if (tabId != null) {
+          params.tabId = tabId;
+        } else {
+          return errorResult(ErrorCodes.INVALID_REF, "Pass tabId or ref.");
+        }
+        return textResult(
+          await callExt("tabs.connect", params, CONSENT_TIMEOUT_MS + 5_000),
+        );
+      }),
   );
 
   server.tool(

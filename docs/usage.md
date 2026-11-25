@@ -16,6 +16,7 @@ An agent only works in its own tab:
 - **A tab you already have open:** the agent takes it with `browser_connect_tab` (tab id from `browser_tabs` with `includeOthers`).
   - The first time an agent takes a tab on a site, Chrome asks. **Allow for this site** lets agents use that site's tabs without asking again.
   - Taking a tab another agent is using always asks.
+- **Hand a tab to an agent:** open the popup on that tab and click **Copy reference**. It copies `browser-mcp://tab/123?key=…`. Paste it into the agent's chat and it takes the tab with no prompt, even from another agent. The key works for 30 minutes, only for that tab, and copying again replaces it.
 - DevTools (network, console, debugger) on its own tab needs no prompt. Chrome shows its own "started debugging this browser" bar.
 
 Restricted URLs (`chrome://`, extension pages, the Web Store) can't be opened or taken.
@@ -31,7 +32,7 @@ The **Stop** button on the tab's pill, or `browser_disconnect`, releases the tab
 
 ## The popup
 
-The toolbar popup lists the agents controlling a tab right now, each with its colour and name. When the current tab is controlled, it also has **Pick element**. With no agent controlling a tab, it shows only the extension version. Update offers and other notices come as Chrome notifications.
+The toolbar popup lists the agents controlling a tab right now, each with its colour and name. When the current tab is controlled, it also has **Pick element**. On any normal web page it has **Copy reference** (see above). With no agent controlling a tab, it shows only the extension version. Update offers and other notices come as Chrome notifications.
 
 ## Controlled-tab indicator
 

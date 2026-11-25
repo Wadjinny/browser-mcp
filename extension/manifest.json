@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "browser-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Let a local MCP agent automate and inspect a Connected Chrome tab.",
   "permissions": [
     "tabs",

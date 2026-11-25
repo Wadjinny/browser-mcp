@@ -1,6 +1,6 @@
 {
   "name": "tabmcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server that lets AI agents drive and inspect your real Chrome through the browser-mcp extension.",
   "license": "MIT",
   "type": "module",

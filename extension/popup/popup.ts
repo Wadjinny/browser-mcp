@@ -10,10 +10,12 @@ type PopupState = {
   hubMismatch: string | null;
   agents: Agent[];
   activeTabHeld: boolean;
+  activeTabReferable: boolean;
 };
 
 const agentsEl = document.getElementById("agents") as HTMLUListElement;
 const pickEl = document.getElementById("pick") as HTMLButtonElement;
+const copyRefEl = document.getElementById("copy-ref") as HTMLButtonElement;
 const versionEl = document.getElementById("version") as HTMLParagraphElement;
 const versionTextEl = document.getElementById("version-text") as HTMLSpanElement;
 const hubDotEl = document.getElementById("hub-dot") as HTMLSpanElement;
@@ -43,6 +45,7 @@ function paint(state: PopupState): void {
     }),
   );
   pickEl.hidden = !state.activeTabHeld;
+  copyRefEl.hidden = !state.activeTabReferable;
   versionEl.hidden = state.agents.length > 0;
   versionTextEl.textContent = `browser-mcp ${state.version}`;
   // Agents listed means the hub is connected; the dot matters when idle.
@@ -62,6 +65,26 @@ async function refresh(): Promise<void> {
 
 pickEl.addEventListener("click", () => {
   void send({ type: "startPicker" }).finally(() => window.close());
+});
+
+/**
+ * Copy just the reference. The server's instructions tell agents to call
+ * browser_connect_tab({ ref }) when one is pasted.
+ */
+copyRefEl.addEventListener("click", async () => {
+  const label = copyRefEl.textContent;
+  try {
+    const res = await send<{ ok: boolean; ref?: string; error?: string }>({
+      type: "tabRef.create",
+    });
+    if (!res?.ok || !res.ref) throw new Error(res?.error ?? "failed");
+    await navigator.clipboard.writeText(res.ref);
+    copyRefEl.textContent = "Copied";
+    setTimeout(() => window.close(), 700);
+  } catch (err) {
+    copyRefEl.textContent = `Copy failed: ${err instanceof Error ? err.message : String(err)}`;
+    setTimeout(() => (copyRefEl.textContent = label), 2500);
+  }
 });
 
 void refresh();

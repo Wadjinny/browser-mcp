@@ -877,6 +877,46 @@ async function allowSite(host: string): Promise<void> {
   await chrome.storage.local.set({ [ALLOWED_SITES_KEY]: [...sites].sort() });
 }
 
+/**
+ * Tab references: the popup's "Copy reference" mints a random key for the
+ * current tab. The user pastes the reference into an agent's chat, and
+ * browser_connect_tab with that ref takes the tab without a prompt: copying it
+ * was the consent. Keys live in session storage (gone when Chrome closes),
+ * expire after TAB_REF_TTL_MS and are bound to one tab.
+ */
+const TAB_REFS_KEY = "tabRefs";
+const TAB_REF_TTL_MS = 30 * 60_000;
+type TabRefs = Record<string, { tabId: number; expires: number }>;
+
+async function readTabRefs(): Promise<TabRefs> {
+  const data = await chrome.storage.session.get(TAB_REFS_KEY);
+  const refs = (data[TAB_REFS_KEY] ?? {}) as TabRefs;
+  const now = Date.now();
+  for (const [key, ref] of Object.entries(refs)) {
+    if (ref.expires <= now) delete refs[key];
+  }
+  return refs;
+}
+
+async function createTabRef(tab: chrome.tabs.Tab): Promise<string> {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  const key = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  const refs = await readTabRefs();
+  // One live reference per tab: copying again replaces the previous key.
+  for (const [k, ref] of Object.entries(refs)) {
+    if (ref.tabId === tab.id) delete refs[k];
+  }
+  refs[key] = { tabId: tab.id!, expires: Date.now() + TAB_REF_TTL_MS };
+  await chrome.storage.session.set({ [TAB_REFS_KEY]: refs });
+  return `browser-mcp://tab/${tab.id}?key=${key}`;
+}
+
+async function isValidTabRef(tabId: number, key: unknown): Promise<boolean> {
+  if (typeof key !== "string" || !key) return false;
+  const ref = (await readTabRefs())[key];
+  return ref?.tabId === tabId;
+}
+
 function consentError(answer: "denied" | "timeout"): BridgeError {
   return answer === "timeout"
     ? bridgeError(
@@ -890,11 +930,13 @@ function consentError(answer: "denied" | "timeout"): BridgeError {
  * browser_connect_tab: take over an existing tab.
  *  - a tab another session holds: always asks;
  *  - a free tab: asks the first time on each site, then that site is allowed;
- *  - BROWSER_MCP_AUTO_ALLOW sessions never ask.
+ *  - BROWSER_MCP_AUTO_ALLOW sessions never ask;
+ *  - a valid key from the popup's "Copy reference" never asks.
  */
 async function connectExistingTab(
   session: number,
   tabId: number,
+  refKey?: unknown,
 ): Promise<unknown> {
   const tab = await assertConnectable(tabId);
   const me = ownerOf(session);
@@ -907,8 +949,14 @@ async function connectExistingTab(
       // keep raw
     }
     const title = tab.title ?? "tab";
-    if (isSessionAutoAllowed(session)) {
-      // Trusted unattended session: no prompt.
+    if (refKey != null && !(await isValidTabRef(tabId, refKey))) {
+      throw bridgeError(
+        ErrorCodes.CONTROL_DENIED,
+        "This tab reference is unknown or expired (references last 30 minutes and only the newest one per tab works). Ask the user to copy a fresh one from the browser-mcp popup.",
+      );
+    }
+    if (refKey != null || isSessionAutoAllowed(session)) {
+      // The user handed over this tab, or a trusted unattended session: no prompt.
     } else if (current) {
       const answer = await askUserConsent(
         "browser-mcp: take over a tab",
@@ -1041,7 +1089,7 @@ async function route(
       return stateFor(session);
 
     case "tabs.connect":
-      return connectExistingTab(session, Number(params.tabId));
+      return connectExistingTab(session, Number(params.tabId), params.refKey);
 
     case "tabs.disconnect": {
       const own = await tabIdForOwner(me);
@@ -1904,7 +1952,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           hubMismatch: hubMismatch(),
           agents,
           activeTabHeld: active?.id != null && owned.some(([id]) => id === active.id),
+          activeTabReferable: active?.id != null && !isRestrictedUrl(active.url),
         });
+        return;
+      }
+      if (msg.type === "tabRef.create") {
+        const active = await activeTab();
+        if (!active?.id) throw bridgeError(ErrorCodes.TAB_GONE, "No active tab.");
+        const tab = await assertConnectable(active.id);
+        const ref = await createTabRef(tab);
+        sendResponse({ ok: true, ref });
         return;
       }
       if (msg.type === "disconnect") {
