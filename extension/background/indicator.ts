@@ -1,7 +1,7 @@
 /**
  * Visual "this tab is agent-controlled" indicator, modelled on Claude in Chrome.
- * Each MCP session (bridge port) gets its own colour:
- *  - its Connected tab is moved into a tab group "🤖 name :port"
+ * Each MCP session gets its own colour:
+ *  - its Connected tab is moved into a tab group "🤖 name"
  *  - a glowing border + bottom pill ("<agent> is controlling this tab", Stop)
  *    is drawn inside the page; the glow pulses while a command is running
  *  - the toolbar badge shows ON (in the session colour) only on that tab
@@ -10,66 +10,66 @@
 import { sessionColor } from "@browser-mcp/shared";
 
 type GroupColor = `${chrome.tabGroups.Color}`;
-const SESSION_GROUPS_KEY = "indicatorGroupsByPort";
+const SESSION_GROUPS_KEY = "indicatorGroupsBySession";
 const IDLE_AFTER_MS = 1500;
 
 type OverlayMode = "show" | "busy" | "idle" | "remove" | "hide-temp" | "unhide";
 
 type Indicated = {
-  port: number;
+  session: number;
   busy: boolean;
   idleTimer: ReturnType<typeof setTimeout> | null;
 };
 
-let labelProvider: (port: number) => string | null = () => null;
+let labelProvider: (session: number) => string | null = () => null;
 const indicated = new Map<number, Indicated>();
 
 export function setIndicatorLabelProvider(
-  fn: (port: number) => string | null,
+  fn: (session: number) => string | null,
 ): void {
   labelProvider = fn;
 }
 
-function agentLabel(port: number): string {
-  return labelProvider(port) ?? `browser-mcp :${port}`;
+function agentLabel(session: number): string {
+  return labelProvider(session) ?? `agent ${session}`;
 }
 
-/** Stable colour per port (ports live in a small discovery band). */
-export function colorFor(port: number): { group: GroupColor; hex: string } {
-  const c = sessionColor(port);
+/** Colour of a session (by its hub session number). */
+export function colorFor(session: number): { group: GroupColor; hex: string } {
+  const c = sessionColor(session);
   return { group: c.name, hex: c.hex };
 }
 
-/** Show (port) or remove (null) the indicator on a tab. */
+/** Show (session) or remove (null) the indicator on a tab. */
 export async function setTabIndicator(
   tabId: number,
-  port: number | null,
+  session: number | null,
 ): Promise<void> {
   const prev = indicated.get(tabId);
   if (prev?.idleTimer) clearTimeout(prev.idleTimer);
-  if (port == null) {
+  if (session == null) {
     indicated.delete(tabId);
     await clearIndicator(tabId);
     return;
   }
-  indicated.set(tabId, { port, busy: false, idleTimer: null });
-  if (prev && prev.port !== port) await runOverlay(tabId, "remove", port);
-  await applyIndicator(tabId, port);
+  indicated.set(tabId, { session, busy: false, idleTimer: null });
+  if (prev && prev.session !== session) await runOverlay(tabId, "remove", session);
+  await applyIndicator(tabId, session);
 }
 
 /** Re-apply after navigation / reload (overlay lives in the document). */
 export async function refreshIndicator(tabId: number): Promise<void> {
   const st = indicated.get(tabId);
   if (!st) return;
-  await setBadge(tabId, st.port);
-  await runOverlay(tabId, st.busy ? "busy" : "show", st.port);
+  await setBadge(tabId, st.session);
+  await runOverlay(tabId, st.busy ? "busy" : "show", st.session);
 }
 
-/** Re-label everything (bridge identities discovered / changed). */
+/** Re-label everything (session names changed). */
 export async function relabelAll(): Promise<void> {
   for (const [tabId, st] of indicated) {
-    await runOverlay(tabId, "remove", st.port);
-    await applyIndicator(tabId, st.port);
+    await runOverlay(tabId, "remove", st.session);
+    await applyIndicator(tabId, st.session);
   }
 }
 
@@ -81,11 +81,11 @@ export function markActivity(tabId: number): void {
   st.idleTimer = setTimeout(() => {
     st.idleTimer = null;
     st.busy = false;
-    if (indicated.get(tabId) === st) void runOverlay(tabId, "idle", st.port);
+    if (indicated.get(tabId) === st) void runOverlay(tabId, "idle", st.session);
   }, IDLE_AFTER_MS);
   if (!st.busy) {
     st.busy = true;
-    void runOverlay(tabId, "busy", st.port);
+    void runOverlay(tabId, "busy", st.session);
   }
 }
 
@@ -96,18 +96,18 @@ export async function withOverlayHidden<T>(
 ): Promise<T> {
   const st = indicated.get(tabId);
   if (!st) return fn();
-  await runOverlay(tabId, "hide-temp", st.port);
+  await runOverlay(tabId, "hide-temp", st.session);
   try {
     return await fn();
   } finally {
-    await runOverlay(tabId, "unhide", st.port);
+    await runOverlay(tabId, "unhide", st.session);
   }
 }
 
-async function applyIndicator(tabId: number, port: number): Promise<void> {
-  await setBadge(tabId, port);
-  await groupTab(tabId, port);
-  await runOverlay(tabId, "show", port);
+async function applyIndicator(tabId: number, session: number): Promise<void> {
+  await setBadge(tabId, session);
+  await groupTab(tabId, session);
+  await runOverlay(tabId, "show", session);
 }
 
 async function clearIndicator(tabId: number): Promise<void> {
@@ -116,11 +116,11 @@ async function clearIndicator(tabId: number): Promise<void> {
   await runOverlay(tabId, "remove", 0);
 }
 
-async function setBadge(tabId: number, port: number): Promise<void> {
+async function setBadge(tabId: number, session: number): Promise<void> {
   try {
     await chrome.action.setBadgeText({ text: "ON", tabId });
     await chrome.action.setBadgeBackgroundColor({
-      color: colorFor(port).hex,
+      color: colorFor(session).hex,
       tabId,
     });
   } catch {
@@ -137,7 +137,7 @@ function isOurGroup(groups: Record<string, number>, groupId: number): boolean {
   return Object.values(groups).includes(groupId);
 }
 
-async function groupTab(tabId: number, port: number): Promise<void> {
+async function groupTab(tabId: number, session: number): Promise<void> {
   if (!chrome.tabGroups) return;
   try {
     const tab = await chrome.tabs.get(tabId);
@@ -147,7 +147,7 @@ async function groupTab(tabId: number, port: number): Promise<void> {
     if (tab.groupId !== NONE && !isOurGroup(groups, tab.groupId)) return;
 
     let groupId: number | null = null;
-    const own = groups[String(port)];
+    const own = groups[String(session)];
     if (own != null) {
       try {
         const g = await chrome.tabGroups.get(own);
@@ -166,11 +166,11 @@ async function groupTab(tabId: number, port: number): Promise<void> {
             });
     }
     await chrome.tabGroups.update(groupId, {
-      title: `🤖 ${agentLabel(port)}`,
-      color: colorFor(port).group,
+      title: `🤖 ${agentLabel(session)}`,
+      color: colorFor(session).group,
     });
     await chrome.storage.session.set({
-      [SESSION_GROUPS_KEY]: { ...groups, [String(port)]: groupId },
+      [SESSION_GROUPS_KEY]: { ...groups, [String(session)]: groupId },
     });
   } catch {
     // grouping is cosmetic; ignore (e.g. tab is being dragged)
@@ -192,13 +192,13 @@ async function ungroupTab(tabId: number): Promise<void> {
 async function runOverlay(
   tabId: number,
   mode: OverlayMode,
-  port: number,
+  session: number,
 ): Promise<void> {
   try {
     await chrome.scripting.executeScript({
       target: { tabId, frameIds: [0] },
       func: overlayInPage,
-      args: [mode, agentLabel(port), colorFor(port).hex],
+      args: [mode, agentLabel(session), colorFor(session).hex],
     });
   } catch {
     // restricted page / not yet committed; refreshIndicator retries on load

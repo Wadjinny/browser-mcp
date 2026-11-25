@@ -55,7 +55,7 @@ References: [Browser MCP](https://github.com/BrowserMCP/mcp), [docs](https://doc
 sequenceDiagram
   participant Agent as Cursor_Agent
   participant MCP as MCP_Server_stdio
-  participant WS as Local_WebSocket
+  participant WS as Hub_127.0.0.1_17373
   participant SW as Extension_ServiceWorker
   participant Tab as Connected_Tab
 
@@ -77,16 +77,19 @@ sequenceDiagram
 
 | Path | Role |
 |------|------|
-| `server/` | Node/TypeScript MCP server (stdio), tool registry, WebSocket server on `127.0.0.1`, request/response correlation, connection state |
-| `extension/` | MV3 package: service worker (WS client, router, debugger lifecycle), content script(s), popup |
+| `server/` | `tabmcp`: the MCP server (stdio, tool registry, hub client) and, as `tabmcp hub`, the hub daemon that relays between agents and the extension |
+| `extension/` | MV3 package: service worker (hub client, router, debugger lifecycle), content script(s), popup |
 
 ### Trust model
 
-1. **Localhost only**: WebSocket listens on `127.0.0.1` (never `0.0.0.0`).
-2. **Connect gate**: Page-affecting commands require a Connected tab. The user can Connect from the popup, or the agent can `browser_open` / `browser_navigate` a non-restricted URL (creates a tab and Connects it). Restricted URLs (`chrome://`, Web Store, …) are always rejected.
-3. **Per-port handshake token**: Each MCP instance has its own token (file, env, or generated). The extension fetches `GET /handshake` **per port** and stores `tokensByPort`. A mismatch closes only that socket.
-4. **Per-session tabs**: The extension keeps a WebSocket to every discovered instance (ports 17373–17392, max 20). Each session owns at most one Connected tab and all tab-scoped RPCs act only on it. `browser_connect_tab` on a tab owned by another session asks the user to Allow/Deny. Optional display name via `BROWSER_MCP_NAME`.
-   - **Auto-allow**: an instance started with `BROWSER_MCP_AUTO_ALLOW=1` advertises `autoAllow: true` in its `/health` identity. For that instance the extension grants control-lease and `browser_connect_tab` requests without a prompt, so headless/unattended sessions work when no human can click Allow/Deny. Opt-in, per-instance, default off; the flag is self-declared (a convenience for the user's own trusted localhost sessions, not a trust boundary — the `127.0.0.1` bind and per-port handshake token are). All other instances keep the prompt.
+1. **Localhost only**: the hub listens on `127.0.0.1` (never `0.0.0.0`).
+2. **One hub, sessions by name**: a single daemon (`tabmcp hub`) on port 17373 (`BROWSER_MCP_PORT`). The first MCP server that needs the browser starts it detached; it exits once no agent has been connected for 60 s. Every MCP server connects to it as an agent; the hub gives each a session number (lowest free, which also picks the colour) and a unique name (`BROWSER_MCP_NAME`, else the MCP client's own name such as `claude-code`; duplicates become `claude-code 2`). There is no limit on sessions. After a hub restart, agents resume their number, name and start time, so their tabs stay theirs.
+3. **Who may connect**: agents must send the token from `~/.config/browser-mcp/token` (`BROWSER_MCP_TOKEN` / `BROWSER_MCP_TOKEN_FILE`) and must not send an `Origin` header. The extension endpoint and `POST /update` only accept a `chrome-extension://` origin, which web pages cannot forge. The token is never served over HTTP.
+4. **Per-session tabs and permission**: each session owns at most one Connected tab and all tab-scoped RPCs act only on it.
+   - Without asking: opening a new tab (`browser_open` / `browser_navigate`), anything in its own tab, and attaching DevTools to it.
+   - `browser_connect_tab` on a free tab asks once per site (hostname); after **Allow for this site**, agents take free tabs on that site without asking.
+   - `browser_connect_tab` on a tab another session holds always asks.
+   - **Auto-allow**: a session started with `BROWSER_MCP_AUTO_ALLOW=1` takes tabs without any prompt, for unattended agents. Opt-in, per session, default off. The flag is self-declared, so it is a convenience for the user's own sessions, not a trust boundary.
 5. **No cloud**: Browser content stays on the machine; MCP host (Cursor) still receives tool results in its context by design of MCP.
 6. **Secure input**: `browser_type_secure` opens a dedicated extension window (`chrome-extension://…/secure/secure.html`) — not an in-page overlay, so the page's scripts cannot read what is being typed. The value goes from that window straight to the service worker and content script, which type it into the Connected tab. It is never a tool argument, tool result, log line, or snapshot value. The tool returns only `{ filled, chars, submitted }`, and fields filled this way are redacted in later snapshots/find results. This protects the secret from the agent, not from the destination page, which receives it normally.
 
@@ -115,7 +118,8 @@ extension/
   manifest.json
   background/          # service worker entry
     sw.ts              # command router, keepalive
-    hub.ts             # multi-WS fan-out, per-port tokens, control lease + notifications
+    hub.ts             # single WebSocket to the hub, session list, Allow/Deny notifications
+    updates.ts         # GitHub release check, update + outdated-server notifications
     debugger.ts        # attach/detach, CDP send, event buffers
     tabs.ts            # Connect state, restricted-URL checks
     pins.ts            # pin store + blocking pick waiter
@@ -139,9 +143,10 @@ extension/
 ```
 server/
   src/
-    index.ts           # stdio MCP entry + start WS
+    index.ts           # entry: MCP server, `hub`, `install-extension`, `--version`
     mcp.ts             # tool registration
-    ws-bridge.ts       # WebSocket server + correlation
+    hub.ts             # the hub daemon (routing, sessions, /health, /update)
+    hub-client.ts      # agent side: lazy connect, starts the hub, resume, Chrome launch
     state.ts
     tools/
       navigation.ts
@@ -157,24 +162,28 @@ server/
     protocol.ts
 ```
 
-### WebSocket protocol
+### Hub protocol
 
-- **Transport**: `ws://127.0.0.1:<port>` (default port **17373**, overridable via env `BROWSER_MCP_WS_PORT`). The extension connects to **every** instance in the discovery band (17373–17392).
-- **Browser startup**: when a tool needs the extension and none is connected, the server waits briefly for a reconnect. If no Chrome process is running it launches Chrome with the user's normal profile (so the installed extension keeps its permissions), then waits up to `BROWSER_MCP_CHROME_CONNECT_TIMEOUT_MS` (default 25 s). Disable with `BROWSER_MCP_LAUNCH_CHROME=0`; configure with `BROWSER_MCP_CHROME_BIN`, `BROWSER_MCP_CHROME_PROFILE`, `BROWSER_MCP_CHROME_USER_DATA_DIR`, `BROWSER_MCP_CHROME_ARGS`, and `BROWSER_MCP_CHROME_EXTENSION`.
-- **Framing**: one JSON object per WebSocket message (text frames).
-- **Direction**:
-  - Server → extension: `request`
-  - Extension → server: `response` | `event`
-- **Identity**: `BridgeIdentity.name` from `BROWSER_MCP_NAME` (optional). Display label is `name :port` (name falls back to the cwd project folder).
+- **Transport**: `ws://127.0.0.1:17373` (`BROWSER_MCP_PORT`). The extension connects to `/extension`, agents to `/agent`. One JSON object per text frame. `PROTOCOL_VERSION` is 2.
+- **Handshake**:
+  - extension → hub: `{ "type": "hello", "role": "extension", "protocolVersion": 2, "extensionVersion": "0.3.0" }`, answered by `welcome`.
+  - agent → hub: `{ "type": "hello", "role": "agent", "protocolVersion": 2, "token": "…", "name": "claude-code", "resume": null, "pid": 1, "cwd": "…", "autoAllow": false, "version": "0.3.0", "latestVersion": null }`, answered by `welcome` with the assigned `SessionInfo` and `extensionConnected`, or `{ "type": "refused", "code", "message" }` (bad token, protocol mismatch; an idle hub with an older protocol exits so the newer agent can start its own).
+- **hub → extension**: `{ "type": "sessions", "sessions": SessionInfo[] }` whenever the list changes, and requests tagged with the session.
+- **hub → agent**: `{ "type": "status", "extensionConnected": bool }` when the extension comes or goes.
+- **agent → hub**: `{ "type": "meta", "latestVersion" }` after the npm check.
+- **Agents connect lazily**, on the first browser tool call. If the hub isn't running they start it (`tabmcp hub`, detached, log in `~/.config/browser-mcp/hub.log`) and retry for up to 5 s. If the connection drops they reconnect in the background, restarting the hub if needed, and resume their session.
+- **Browser startup**: when a tool needs the extension and none is connected, the agent waits briefly for a reconnect. If no Chrome process is running it launches Chrome with the user's normal profile, then waits up to `BROWSER_MCP_CHROME_CONNECT_TIMEOUT_MS` (default 25 s). Disable with `BROWSER_MCP_LAUNCH_CHROME=0`; configure with `BROWSER_MCP_CHROME_BIN`, `BROWSER_MCP_CHROME_PROFILE`, `BROWSER_MCP_CHROME_USER_DATA_DIR`, `BROWSER_MCP_CHROME_ARGS`, and `BROWSER_MCP_CHROME_EXTENSION`.
 
 #### Request
+
+Agent → hub (the hub assigns its own id and adds `session` before forwarding to the extension):
 
 ```json
 {
   "type": "request",
   "id": "uuid",
-  "token": "<handshake>",
-  "method": "tabs.snapshot",
+  "session": 2,
+  "method": "page.snapshot",
   "params": {}
 }
 ```
@@ -197,16 +206,19 @@ server/
   "ok": false,
   "error": {
     "code": "NO_CONNECTED_TAB",
-    "message": "No tab Connected in the extension popup."
+    "message": "This session has no Connected tab."
   }
 }
 ```
 
-#### Event (extension → server, unsolicited)
+#### Event (extension → hub → agents)
+
+With `session`, the hub delivers the event to that session only (tab-scoped data must not leak); without it, to every session.
 
 ```json
 {
   "type": "event",
+  "session": 2,
   "event": "state.changed",
   "payload": {
     "extensionConnected": true,
@@ -218,13 +230,18 @@ server/
 }
 ```
 
-Other events (buffered for tools): `console.message`, `network.request`, `network.response`, `debugger.detached`, `control.changed`.
+Other events (buffered for tools): `console.message`, `network.request`, `network.response`, `debugger.detached`.
 
-#### Extension updates (HTTP, extension → server)
+#### HTTP
 
-Release builds (CI builds of a `v*` tag, `build-info.json` channel `release`) poll the GitHub releases API every 6 h. When a newer version exists the extension shows a notification and a popup banner; the user chooses **Update** or **Skip**. Nothing is installed automatically.
+- `GET /health`: `{ ok, version, protocolVersion, extensionConnected, sessions }`.
+- `POST /update` `{ tag }` (extension origin only): see below.
 
-On **Update** the extension sends `POST /update` `{ token, tag }` to a connected server. The server downloads that release's zip, refuses it if its `build-info.json` `protocolVersion` differs from the server's, extracts it into `BROWSER_MCP_EXTENSION_DIR` (default `~/.config/browser-mcp/extension`) and replies `{ ok, version, dir }` or `{ ok: false, error }`. Then the extension calls `chrome.runtime.reload()`. After the restart, if its version is still older, the extension is loaded from another folder, and the popup says where the update went. `browser-mcp install-extension [tag]` does the same install from the command line.
+#### Extension updates
+
+Release builds (CI builds of a `v*` tag, `build-info.json` channel `release`) poll the GitHub releases API every 6 h. When a newer version exists the extension shows a Chrome notification with **Update now** and **Skip this version**. Nothing is installed automatically.
+
+On **Update now** the extension sends `POST /update` to the hub. The hub downloads that release's zip, refuses it if its `build-info.json` `protocolVersion` differs from its own, extracts it into `BROWSER_MCP_EXTENSION_DIR` (default `~/.config/browser-mcp/extension`) and replies `{ ok, version, dir }` or `{ ok: false, error }`. Then the extension calls `chrome.runtime.reload()`. After the restart, if its version is still older, the extension is loaded from another folder, and a notification says where the update went. `tabmcp install-extension [tag]` does the same install from the command line. Outdated MCP servers (from each session's `latestVersion`) are also reported once per version in a notification.
 
 #### Method catalog (extension RPC)
 
@@ -232,8 +249,8 @@ On **Update** the extension sends `POST /update` `{ token, tag }` to a connected
 |--------|------|-------------|
 | `ping` | both | Liveness |
 | `state.get` | → ext | Current Connect / debugger state |
-| `control.request` / `release` / `status` | → ext | Control lease (notify on steal) |
-| `tabs.connect` | → ext | Connect given `tabId` (popup uses this; MCP may not expose) |
+| `control.request` / `release` / `status` | → ext | Legacy aliases: status / disconnect |
+| `tabs.connect` | → ext | Take over `tabId` (asks once per site, or always if another session holds it) |
 | `tabs.disconnect` | → ext | Clear Connected tab; detach debugger |
 | `tabs.open` | → ext | Create a tab at `url`, wait for load, Connect it |
 | `tabs.navigate` | → ext | `chrome.tabs.update` URL, or `tabs.open` if none Connected |
@@ -257,46 +274,25 @@ Timeouts: default **30s** per request; extension cancels work and returns `TIMEO
 
 ## 4. Popup behavior
 
-Job of the popup: **choose which tab the agent may control**, and show bridge health. No dashboard clutter.
-
-### Layout (textual wireframe)
+The popup only shows which agents are controlling a tab, anywhere in the browser. Nothing else.
 
 ```
-┌─────────────────────────────────────┐
-│  browser-mcp                       │
-│  MCP bridge: ● Connected / ○ …      │
-├─────────────────────────────────────┤
-│  This tab                           │
-│  Title of active tab                │
-│  https://example.com/path           │
-│                                     │
-│  [ Connect ]   or   [ Disconnect ]  │
-├─────────────────────────────────────┤
-│  Agent target                       │
-│  Connected: Example · example.com   │
-│  or: No tab connected               │
-├─────────────────────────────────────┤
-│  Last error (if any)                │
-│  Advanced: port 17373               │
-└─────────────────────────────────────┘
+┌──────────────────────────┐
+│ ● claude-code            │
+│ ● claude-code 2          │
+│ [ Pick element ]         │  only when the active tab is held by an agent
+└──────────────────────────┘
+
+┌──────────────────────────┐
+│ browser-mcp 0.3.0        │  no agent holds a tab
+└──────────────────────────┘
 ```
 
-### Behavior rules
+- Each row is a session's colour and name. A session that is connected but holds no tab is not listed.
+- **Stop** lives on the in-page pill of each controlled tab, not in the popup.
+- Update offers, update results and outdated-server notices are Chrome notifications.
 
-1. **Connect** targets the **currently active tab** in the window where the popup was opened (BrowserMCP-style).
-2. Connecting a new tab **Disconnects** the previous one (single Connected tab in v1).
-3. **Disconnect** clears Connected state and **detaches** the debugger if attached.
-4. Status lines:
-   - Bridge: WebSocket to MCP server up / down / reconnecting.
-   - Agent target: Connected tab title + origin, or “No tab connected”.
-5. **Restricted URLs** fail Connect with a visible error:
-   - `chrome://`, `chrome-extension://`, `edge://`, `about:`
-   - Chrome Web Store
-   - Other URLs where content scripts or debugger cannot run (document as discovered)
-6. Closing the Connected tab auto-Disconnects and emits `state.changed`.
-7. Navigating the Connected tab to a restricted URL auto-Disconnects.
-8. Optional: badge on the extension icon (`ON` / empty) when a tab is Connected.
-9. **Bridges list**: every discovered MCP instance with `name :port`, connected vs controlling. **Control** grants the lease instantly (no notification). A pending steal shows as “pending from {name}”.
+Tab rules (unchanged): closing the Connected tab or navigating it to a restricted URL auto-disconnects; restricted URLs (`chrome://`, `chrome-extension://`, `edge://`, `about:`, the Web Store) can't be connected; the toolbar badge shows `ON` on controlled tabs.
 
 ---
 
@@ -334,10 +330,10 @@ Prefer **programmatic injection** (`chrome.scripting.executeScript` / register c
 | `tabs` / `windows` | List active tab, navigate, read title/URL for popup |
 | `scripting` | Inject automation helpers into Connected tab |
 | `activeTab` | Extra affordance when user opens popup on a tab |
-| `storage` | Handshake tokens by port, controller port, last error |
+| `storage` | Tab owners, allowed sites, update state |
 | `debugger` | CDP attach for DevTools-depth tools |
 | `webNavigation` | Load lifecycle, restricted-URL detection |
-| `notifications` | Allow/Deny prompt when an instance asks to steal the control lease |
+| `notifications` | Allow/Deny prompts for tab takeovers; update notices |
 | `<all_urls>` | Inject / debugger on arbitrary https origins after user Connects |
 
 **Install UX note**: `debugger` triggers Chrome’s strong warning (“full access to DevTools…”). README/popup copy should state that access is limited to the user-Connected tab and a local MCP server.
@@ -348,24 +344,23 @@ Prefer **programmatic injection** (`chrome.scripting.executeScript` / register c
 
 Naming: `browser_*` for automation parity with Browser/Playwright MCP; `devtools_*` for debugger-backed tools. All tools operate on the **Connected** tab unless noted.
 
-### 6.0 Control lease
+### 6.0 Session
 
-#### `browser_request_control`
+#### `browser_connect_tab`
 
-Ask to become the instance that may mutate the Connected tab. Auto-grants if nobody holds the lease; otherwise shows a Chrome Allow/Deny notification (60s).
+Take over an existing tab (id from `browser_tabs` with `includeOthers`). Free tab: asks once per site. Tab held by another session: always asks (60 s). `BROWSER_MCP_AUTO_ALLOW` sessions never ask.
 
-**Params**: `{}`  
-**Returns**: `{ controllerPort, controlling, identity }`
+#### `browser_disconnect`
 
-#### `browser_release_control`
+Release this session's tab (removes its group, border and badge; detaches the debugger).
 
-Yield the lease so the next instance can auto-grant without a notification.
+#### `browser_update_extension`
+
+Installs the extension release tagged with this server's version (`v<version>`, the same tag CI publishes both from) into the extension folder, then sends `{ "type": "reloadExtension" }` to the hub. If the extension is connected, the hub sends it `{ "type": "reload" }`. If the hub refused it for a protocol mismatch, its next hello is answered with `refused` plus `"reload": true`. `refused` and `reload` are stable across protocol versions so this works for any mismatch. Waits up to 30 s for the extension to reconnect. Tools fail with `EXTENSION_VERSION_MISMATCH` while the hub is refusing the extension.
 
 #### `browser_control_status`
 
-Who currently holds the lease.
-
-Mutating tools (`browser_click`, navigate, evaluate, …) auto-request control when needed. Read-only tools (`browser_snapshot`, network list, …) do not.
+This session's `SessionInfo`, its tab, and which tabs other sessions hold. `browser_request_control` / `browser_release_control` remain as legacy aliases (status / disconnect).
 
 ### 6.1 Automation
 
@@ -668,10 +663,9 @@ Stable `error.code` values returned through MCP tool errors:
 | `PICK_CANCELLED` | User or agent cancelled element pick |
 | `PICK_TIMEOUT` | Element pick exceeded timeout (~90s) |
 | `PICK_IN_PROGRESS` | A pick session is already active |
-| `UNAUTHORIZED` | Handshake token mismatch |
-| `CONTROL_DENIED` | User denied a control-lease steal |
+| `UNAUTHORIZED` | Hub token mismatch |
+| `CONTROL_DENIED` | User denied a tab takeover |
 | `CONTROL_REQUEST_TIMEOUT` | Allow/Deny notification expired (~60s) |
-| `CONTROL_REQUEST_PENDING` | Another instance already has a steal prompt open |
 
 Messages should be short and actionable (e.g. “Open the browser-mcp popup and click Connect on the target tab.”).
 
@@ -679,18 +673,14 @@ Messages should be short and actionable (e.g. “Open the browser-mcp popup and 
 
 ## 9. Cursor MCP config example
 
-After `server` is packaged (implementation phase):
+The server is published on npm as `tabmcp`:
 
 ```json
 {
   "mcpServers": {
     "browser-mcp": {
       "command": "npx",
-      "args": ["tsx", "/absolute/path/to/browser-mcp/server/src/index.ts"],
-      "env": {
-        "BROWSER_MCP_WS_PORT": "17373",
-        "BROWSER_MCP_NAME": "my-project"
-      }
+      "args": ["-y", "tabmcp@latest"]
     }
   }
 }
@@ -720,7 +710,7 @@ User flow:
 
 - **SW lifecycle**: idle service workers may drop WS; need ping + exponential reconnect; consider `chrome.alarms` or offscreen document only if keepalive proves insufficient.
 - **Debugger vs DevTools UI**: agents and humans cannot both hold CDP on the same tab easily; document and surface errors.
-- **Security of localhost WS**: token handshake mitigates other local processes calling the extension; still trust the local machine user.
+- **Security of localhost WS**: agents need the token file; the extension endpoint needs a `chrome-extension://` origin. Any extension can present that origin, and any process of the same user can read the token, so the local user account is still trusted.
 - **Ref staleness**: snapshots must be refreshed after navigation/DOM changes; tools should recommend re-snapshot on `INVALID_REF`.
 - **Parity trap**: do not aim for 100% Playwright MCP API compatibility; aim for agent-effective tools plus DevTools depth.
 

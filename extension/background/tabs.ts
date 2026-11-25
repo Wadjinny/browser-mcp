@@ -36,17 +36,17 @@ export function isRestrictedUrl(url: string | undefined | null): boolean {
 }
 
 /**
- * Tab ownership: every MCP session (bridge port) owns at most one Connected
- * tab. Sessions act only on their own tab, so several agents can work in
- * parallel without fighting over a global lease.
+ * Tab ownership: every MCP session (hub session number) owns at most one
+ * Connected tab. Sessions act only on their own tab, so several agents can
+ * work in parallel.
  */
 export type TabOwner = {
-  port: number;
-  /** Bridge process start time; guards against a new instance reusing the port. */
+  session: number;
+  /** Session start time; guards against a new session reusing the number. */
   startedAt: number | null;
 };
 
-const OWNERS_KEY = "tabOwners";
+const OWNERS_KEY = "tabOwnersBySession";
 const LEGACY_KEY = "connectedTabId";
 
 let ownersPromise: Promise<Map<number, TabOwner>> | null = null;
@@ -68,10 +68,10 @@ function owners(): Promise<Map<number, TabOwner>> {
     const raw = (data[OWNERS_KEY] ?? {}) as Record<string, TabOwner>;
     const map = new Map<number, TabOwner>();
     for (const [k, v] of Object.entries(raw)) {
-      if (v && typeof v.port === "number") map.set(Number(k), v);
+      if (v && typeof v.session === "number") map.set(Number(k), v);
     }
-    // Pre-multi-tab single connection had no owner; drop it.
-    if (data[LEGACY_KEY] != null) await chrome.storage.local.remove(LEGACY_KEY);
+    // Older builds keyed ownership differently; those owners are gone.
+    await chrome.storage.local.remove([LEGACY_KEY, "tabOwners"]);
     return map;
   })();
   return ownersPromise;
@@ -88,7 +88,7 @@ async function persist(map: Map<number, TabOwner>): Promise<void> {
 export function sameOwner(a: TabOwner | null, b: TabOwner | null): boolean {
   if (!a || !b) return a === b;
   return (
-    a.port === b.port &&
+    a.session === b.session &&
     (a.startedAt == null || b.startedAt == null || a.startedAt === b.startedAt)
   );
 }
@@ -122,7 +122,7 @@ export async function setTabOwner(
   const released: Array<[number, TabOwner]> = [];
   if (next) {
     for (const [id, o] of map) {
-      if (id !== tabId && o.port === next.port) released.push([id, o]);
+      if (id !== tabId && o.session === next.session) released.push([id, o]);
     }
     for (const [id] of released) map.delete(id);
     map.set(tabId, next);
@@ -131,15 +131,15 @@ export async function setTabOwner(
   }
   await persist(map);
   for (const [id, old] of released) await ownerListener(id, old, null);
-  if (prev?.port !== next?.port || prev?.startedAt !== next?.startedAt) {
+  if (prev?.session !== next?.session || prev?.startedAt !== next?.startedAt) {
     await ownerListener(tabId, prev, next);
   }
 }
 
-/** Release every tab owned by a port (bridge went away for good). */
-export async function releaseTabsOfPort(port: number): Promise<number[]> {
+/** Release every tab owned by a session (it went away for good). */
+export async function releaseTabsOfSession(session: number): Promise<number[]> {
   const ids = [...(await owners())]
-    .filter(([, o]) => o.port === port)
+    .filter(([, o]) => o.session === session)
     .map(([id]) => id);
   for (const id of ids) await setTabOwner(id, null);
   return ids;
@@ -158,7 +158,7 @@ export async function requireTabFor(owner: TabOwner): Promise<chrome.tabs.Tab> {
   if (id == null) {
     throw bridgeError(
       ErrorCodes.NO_CONNECTED_TAB,
-      "This session has no Connected tab. Call browser_open with a URL, browser_connect_tab with a tabId from browser_tabs, or click Connect in the extension popup.",
+      "This session has no Connected tab. Call browser_open with a URL, or browser_connect_tab with a tabId from browser_tabs.",
     );
   }
   const tab = await getTab(id);
@@ -216,7 +216,7 @@ export async function buildState(
 export async function listTabs(
   owner: TabOwner,
   includeOthers: boolean,
-  labelFor: (port: number) => string,
+  labelFor: (session: number) => string,
 ): Promise<{
   connected: TabInfo | null;
   others?: TabInfo[];
@@ -238,7 +238,7 @@ export async function listTabs(
       const o = map.get(t.id!);
       return {
         ...toTabInfo(t),
-        ...(o ? { connectedBy: labelFor(o.port) } : {}),
+        ...(o ? { connectedBy: labelFor(o.session) } : {}),
       };
     });
   return { connected, others };

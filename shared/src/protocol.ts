@@ -1,35 +1,20 @@
 import type { BridgeError } from "./errors.js";
 
-export const DEFAULT_WS_PORT = 17373;
-
 /**
- * Bridges must stay inside a small, fixed band so the extension can find every
- * running instance with a bounded scan. Binding outside this band (e.g. an
- * ephemeral port) makes an instance undiscoverable.
+ * The hub: one local daemon on this port. The extension and every MCP server
+ * connect to it; sessions are told apart by name, not by port.
  */
-export const DISCOVERY_BASE_PORT = 17373;
-export const DISCOVERY_PORT_COUNT = 20;
-
-/** Candidate ports, preferred first, then the discovery band in order. */
-export function discoveryPorts(preferred?: number): number[] {
-  const band = Array.from(
-    { length: DISCOVERY_PORT_COUNT },
-    (_, i) => DISCOVERY_BASE_PORT + i,
-  );
-  if (!preferred) return band;
-  return [preferred, ...band.filter((p) => p !== preferred)];
-}
+export const DEFAULT_HUB_PORT = 17373;
+/** WebSocket paths on the hub. */
+export const HUB_EXTENSION_PATH = "/extension";
+export const HUB_AGENT_PATH = "/agent";
 
 /** Max length of `BROWSER_MCP_NAME` after trim. */
 export const INSTANCE_NAME_MAX_LEN = 40;
 
-/** How long the extension waits for Allow/Deny on a control steal. */
-export const CONTROL_REQUEST_TIMEOUT_MS = 60_000;
-
 /**
- * Chrome tab-group colours, one stable colour per bridge port.
- * Order is the session identity: the popup, the tab group, and the badge
- * all use this list.
+ * Chrome tab-group colours, one per session number. The popup, the tab group,
+ * the page border and the badge all use this list.
  */
 export const SESSION_COLOR_PALETTE = [
   { name: "orange", hex: "#e8710a" },
@@ -44,36 +29,35 @@ export const SESSION_COLOR_PALETTE = [
 
 export type SessionColorName = (typeof SESSION_COLOR_PALETTE)[number]["name"];
 
-export function sessionColor(port: number): {
+export function sessionColor(session: number): {
   name: SessionColorName;
   hex: string;
 } {
   const n = SESSION_COLOR_PALETTE.length;
-  return SESSION_COLOR_PALETTE[((port % n) + n) % n]!;
+  return SESSION_COLOR_PALETTE[(((session - 1) % n) + n) % n]!;
 }
 
-/** Identity of one bridge instance, shown in the popup's Bridges list. */
-export type BridgeIdentity = {
+/**
+ * One connected MCP server, as the hub describes it. `id` is a small number
+ * (lowest free) that picks the session colour; `name` is unique among live
+ * sessions ("claude-code", "claude-code 2", ...).
+ */
+export type SessionInfo = {
+  id: number;
+  name: string;
+  /** When the hub first created this session; resumed sessions keep it. */
+  startedAt: number;
   pid: number;
   cwd: string;
-  startedAt: number;
-  port: number;
-  preferredPort: number;
-  /** From `BROWSER_MCP_NAME`; display-only, not a unique key. */
-  name: string | null;
   /**
-   * From `BROWSER_MCP_AUTO_ALLOW`. When true, the extension auto-grants this
-   * instance's control-lease and connect-tab requests instead of prompting the
-   * user with an Allow/Deny notification. Opt-in, per-instance, default false:
-   * only set it on instances you trust to drive the browser unattended (e.g. a
-   * headless agent session where nobody can click the prompt). Older bridges
-   * omit the field, so treat `undefined` as false.
+   * From `BROWSER_MCP_AUTO_ALLOW`: the extension grants this session's tab
+   * takeovers without asking. Opt-in, for unattended agents.
    */
-  autoAllow?: boolean;
-  /** Server package version ("dev" from source). Older bridges omit it. */
-  version?: string;
-  /** Newer server version published on npm, if this one is outdated. */
-  latestVersion?: string | null;
+  autoAllow: boolean;
+  /** Server package version ("dev" from source). */
+  version: string;
+  /** Newer server version on npm, if this one is outdated. */
+  latestVersion: string | null;
 };
 
 /** Parse a boolean-ish env value (`1/true/yes/on`). Default false. */
@@ -88,31 +72,13 @@ export function parseInstanceName(raw?: string | null): string | null {
   return trimmed.slice(0, INSTANCE_NAME_MAX_LEN);
 }
 
-/** Last path segment of a cwd, used when no instance name is set. */
-export function projectOfCwd(cwd: string): string {
-  const parts = cwd.replace(/[\\/]+$/, "").split(/[\\/]/);
-  return parts[parts.length - 1] || cwd;
-}
-
-/** Human label: `name :port` (name falls back to the project folder). */
-export function instanceLabel(identity: {
-  name?: string | null;
-  cwd: string;
-  port: number;
-}): string {
-  const name = identity.name?.trim() || projectOfCwd(identity.cwd);
-  return `${name} :${identity.port}`;
-}
-
-/** Shape returned by GET /health. */
-export type BridgeHealth = {
+/** Shape returned by GET /health on the hub. */
+export type HubHealth = {
   ok: boolean;
+  version: string;
+  protocolVersion: number;
   extensionConnected: boolean;
-  /** null until the extension has announced a choice. */
-  authorized: boolean | null;
-  activePort: number | null;
-  identity: BridgeIdentity;
-  state: BridgeState;
+  sessions: number;
 };
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -121,7 +87,7 @@ export const PICK_ELEMENT_TIMEOUT_MS = 90_000;
 export const SECURE_INPUT_TIMEOUT_MS = 120_000;
 /** Max `waitForMs` for network.list; bridge timeout is waitForMs + slack. */
 export const MAX_NETWORK_WAIT_FOR_MS = 300_000;
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** GitHub repo whose releases carry the prebuilt extension zip. */
 export const UPDATE_REPO = "Wadjinny/browser-mcp";
@@ -154,8 +120,8 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-/** Body of `POST /update` (extension -> server). */
-export type UpdateRequest = { token: string; tag: string };
+/** Body of `POST /update` (extension -> hub). */
+export type UpdateRequest = { tag: string };
 
 /** Reply of `POST /update`. */
 export type UpdateResponse =
@@ -347,68 +313,17 @@ export type RpcMethod =
   | "control.release"
   | "control.status";
 
+/** How long the extension waits for Allow/Deny on a tab takeover. */
+export const CONSENT_TIMEOUT_MS = 60_000;
+
 /**
- * RPC methods that require the control lease. Read-only inspection and
- * `control.*` itself are excluded so every connected instance can talk.
+ * hub -> extension: a request from one session. Agents send the same shape
+ * without `session`; the hub fills it in.
  */
-export const MUTATING_RPC_METHODS: ReadonlySet<string> = new Set([
-  "tabs.connect",
-  "tabs.disconnect",
-  "tabs.open",
-  "tabs.navigate",
-  "tabs.goBack",
-  "tabs.goForward",
-  "tabs.wait",
-  "page.click",
-  "page.hover",
-  "page.drag",
-  "page.type",
-  "page.typeSecure",
-  "page.pressKey",
-  "page.screenshot",
-  "page.evaluate",
-  "page.pickElement",
-  "page.pickCancel",
-  "pins.clear",
-  "debugger.attach",
-  "debugger.detach",
-  "debugger.sendCommand",
-  "storage.setCookie",
-  "storage.clearCookies",
-  "storage.setLocal",
-  "storage.clearLocal",
-  "storage.setSession",
-  "storage.clearSession",
-]);
-
-export function isMutatingRpc(method: string): boolean {
-  return MUTATING_RPC_METHODS.has(method);
-}
-
-export type ControlChangeReason =
-  | "granted"
-  | "stolen"
-  | "released"
-  | "manual"
-  | "disconnected";
-
-export type ControlChangedPayload = {
-  controllerPort: number | null;
-  identity: BridgeIdentity | null;
-  reason: ControlChangeReason;
-};
-
-export type ControlStatus = {
-  controllerPort: number | null;
-  controlling: boolean;
-  /** Identity of the bridge holding control (not necessarily the caller). */
-  identity: BridgeIdentity | null;
-};
-
 export type RequestMessage = {
   type: "request";
   id: string;
-  token: string;
+  session?: number;
   method: RpcMethod | string;
   params?: Record<string, unknown>;
 };
@@ -426,36 +341,101 @@ export type EventName =
   | "console.message"
   | "network.request"
   | "network.response"
-  | "debugger.detached"
-  | "auth.ready"
-  | "control.changed";
+  | "debugger.detached";
 
+/**
+ * extension -> hub: `session` targets one session (tab-scoped data must not
+ * leak); without it the event goes to every session. hub -> agent: no session.
+ */
 export type EventMessage = {
   type: "event";
+  session?: number;
   event: EventName | string;
   payload?: unknown;
 };
 
-export type HelloMessage = {
+/** extension -> hub, first message. */
+export type ExtensionHello = {
   type: "hello";
-  protocolVersion: number;
   role: "extension";
-  token?: string;
+  protocolVersion: number;
+  extensionVersion: string;
 };
 
-export type WelcomeMessage = {
-  type: "welcome";
+/** agent -> hub, first message. */
+export type AgentHello = {
+  type: "hello";
+  role: "agent";
   protocolVersion: number;
   token: string;
-  port: number;
+  /** Requested name; the hub adds " 2", " 3"... if it is taken. */
+  name: string;
+  /** Reclaim this session after a hub restart, if it is still free. */
+  resume?: { id: number; startedAt: number; name: string } | null;
+  pid: number;
+  cwd: string;
+  autoAllow: boolean;
+  version: string;
+  latestVersion: string | null;
 };
 
-export type BridgeMessage =
-  | RequestMessage
-  | ResponseMessage
-  | EventMessage
-  | HelloMessage
-  | WelcomeMessage;
+/** hub -> agent: accepted. */
+export type AgentWelcome = {
+  type: "welcome";
+  protocolVersion: number;
+  hubVersion: string;
+  /** When the hub started; a fresh hub may not have been found by the extension yet. */
+  hubStartedAt: number;
+  session: SessionInfo;
+  extensionConnected: boolean;
+  extensionMismatch: ExtensionMismatch | null;
+};
+
+/**
+ * hub -> agent or extension: refused (bad token, incompatible protocol, another
+ * extension already connected). STABLE ACROSS PROTOCOL VERSIONS: an extension
+ * of any version must understand `reload`, so a hub can tell an extension of
+ * the wrong version to load the matching files an agent just installed
+ * (browser_update_extension).
+ */
+export type HubRefusal = {
+  type: "refused";
+  code: string;
+  message: string;
+  /** Extension only: newer files are on disk; reload to pick them up. */
+  reload?: boolean;
+};
+
+/**
+ * hub -> extension: reload now to pick up files installed on disk. Stable
+ * across protocol versions, like `refused`.
+ */
+export type HubReload = { type: "reload" };
+
+/** An extension the hub refused because its protocol doesn't match. */
+export type ExtensionMismatch = {
+  extensionVersion: string;
+  protocolVersion: number;
+};
+
+/** hub -> agent: the extension connected, went away, or was refused. */
+export type HubStatus = {
+  type: "status";
+  extensionConnected: boolean;
+  extensionMismatch: ExtensionMismatch | null;
+};
+
+/** agent -> hub: identity fields that changed after hello. */
+export type AgentMeta = { type: "meta"; latestVersion: string | null };
+
+/**
+ * agent -> hub: matching extension files were just installed on disk; make
+ * the extension reload (now if connected, or on its next hello if refused).
+ */
+export type AgentReloadExtension = { type: "reloadExtension" };
+
+/** hub -> extension: every live session, sent whenever the list changes. */
+export type SessionsMessage = { type: "sessions"; sessions: SessionInfo[] };
 
 export function emptyBridgeState(): BridgeState {
   return {

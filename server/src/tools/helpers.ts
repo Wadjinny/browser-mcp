@@ -4,7 +4,7 @@ import {
   isCdpMethodAllowed,
   type ErrorCode,
 } from "@browser-mcp/shared";
-import { getBridge } from "../ws-bridge.js";
+import { getBridge } from "../hub-client.js";
 
 export type ToolResult = {
   content: Array<

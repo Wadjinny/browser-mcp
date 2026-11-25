@@ -21,7 +21,12 @@ if (releaseTag && !releaseVersion) {
   throw new Error(`BROWSER_MCP_VERSION=${releaseTag} is not a Chrome version (expected v1.2.3).`);
 }
 const channel = releaseVersion ? "release" : "dev";
-const define = { __BROWSER_MCP_CHANNEL__: JSON.stringify(channel) };
+// BROWSER_MCP_HUB_PORT points a dev/test build at a hub on another port.
+const hubPort = Number(process.env.BROWSER_MCP_HUB_PORT) || null;
+const define = {
+  __BROWSER_MCP_CHANNEL__: JSON.stringify(channel),
+  __BROWSER_MCP_HUB_PORT__: JSON.stringify(hubPort),
+};
 
 function crc32(buf: Buffer): number {
   let c = ~0;

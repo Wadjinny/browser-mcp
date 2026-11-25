@@ -1,5 +1,4 @@
 import {
-  DEFAULT_WS_PORT,
   ERROR_MESSAGES,
   ErrorCodes,
   PICK_ELEMENT_TIMEOUT_MS,
@@ -29,26 +28,18 @@ import {
   waitForNetwork,
 } from "./debugger.js";
 import {
-  anyExtensionConnected,
   askUserConsent,
-  connectedPorts,
-  emitEventToPort,
-  getControllerPort,
-  getTokenForPort,
-  identityOfPort,
-  isPortAutoAllowed,
+  emitEventToSession,
+  hubConnected,
+  hubMismatch,
   initHubListeners,
-  labelForPort,
-  onIdentitiesChanged,
-  pendingControlLabel,
-  reconnectAll,
-  refreshBridges,
+  isSessionAutoAllowed,
+  labelForSession,
+  liveSessions,
   respond,
+  sessionInfo,
   setHubHooks,
-  setLastError,
-  setManualControl,
   startHub,
-  summaryBridgeStatus,
 } from "./hub.js";
 import {
   allocatePinId,
@@ -73,7 +64,7 @@ import {
   listOwnedTabs,
   listTabs,
   onTabOwnerChanged,
-  releaseTabsOfPort,
+  releaseTabsOfSession,
   requireTabFor,
   sameOwner,
   setTabOwner,
@@ -83,6 +74,7 @@ import {
   type TabOwner,
 } from "./tabs.js";
 import {
+  colorFor,
   markActivity,
   refreshIndicator,
   relabelAll,
@@ -98,11 +90,8 @@ import {
 import {
   UPDATE_ALARM,
   checkForUpdates,
-  dismissUpdateMessages,
   initUpdateListeners,
-  installUpdate,
-  skipUpdate,
-  updateStatus,
+  notifyOutdatedServers,
   verifyAppliedUpdate,
 } from "./updates.js";
 
@@ -114,42 +103,35 @@ const QUIET_METHODS = new Set([
   "control.status",
 ]);
 
-/** How long a vanished bridge keeps its tab (MCP restart, SW wake-up). */
+/** How long a vanished session keeps its tab (agent restart, hub restart). */
 const RELEASE_GRACE_MS = 60_000;
-/** Port -> when we first saw it owning a tab without an open socket. */
+/** Session -> when we first saw it owning a tab while the hub didn't list it. */
 const missingSince = new Map<number, number>();
 
 /**
  * Release tabs whose session has been gone for RELEASE_GRACE_MS. Runs on the
  * 30 s keepalive alarm (timers alone die when Chrome suspends the worker) and
- * shortly after a socket closes.
+ * shortly after a session leaves.
  */
 async function sweepOrphanTabs(): Promise<void> {
-  const live = new Set(connectedPorts());
+  const live = new Set(liveSessions());
   const now = Date.now();
-  const ports = new Set((await listOwnedTabs()).map(([, o]) => o.port));
-  for (const port of ports) {
-    if (live.has(port)) {
-      missingSince.delete(port);
+  const owners = new Set((await listOwnedTabs()).map(([, o]) => o.session));
+  for (const session of owners) {
+    if (live.has(session)) {
+      missingSince.delete(session);
       continue;
     }
-    const since = missingSince.get(port) ?? now;
-    missingSince.set(port, since);
+    const since = missingSince.get(session) ?? now;
+    missingSince.set(session, since);
     if (now - since >= RELEASE_GRACE_MS) {
-      missingSince.delete(port);
-      await releaseTabsOfPort(port);
+      missingSince.delete(session);
+      await releaseTabsOfSession(session);
     }
   }
 }
 
-setIndicatorLabelProvider((port) => labelForPort(port));
-onIdentitiesChanged(() => {
-  void (async () => {
-    // A port may now belong to a different process: drop its old tabs first.
-    for (const port of connectedPorts()) await dropStaleOwnership(port);
-    await relabelAll();
-  })();
-});
+setIndicatorLabelProvider((session) => labelForSession(session));
 
 onTabOwnerChanged(async (tabId, prev, next) => {
   if (prev && !sameOwner(prev, next)) {
@@ -158,32 +140,42 @@ onTabOwnerChanged(async (tabId, prev, next) => {
     await clearPinsAndLocal(tabId);
     await forgetTab(tabId);
   }
-  await setTabIndicator(tabId, next?.port ?? null);
-  if (prev) void pushStateTo(prev.port);
-  if (next && next.port !== prev?.port) void pushStateTo(next.port);
+  await setTabIndicator(tabId, next?.session ?? null);
+  if (prev) void pushStateTo(prev.session);
+  if (next && next.session !== prev?.session) void pushStateTo(next.session);
 });
 
 setHubHooks({
-  onRequest: (msg, ws, port) => handleRequest(msg, ws, port),
-  onConnected: async (port) => {
-    missingSince.delete(port);
-    await dropStaleOwnership(port);
-    await pushStateTo(port);
-  },
-  onDisconnected: (port) => {
+  onRequest: (msg, session) => handleRequest(msg, session),
+  onConnected: () => void sweepOrphanTabs(),
+  onSessions: (sessions, previous) => {
     void (async () => {
-      // Cancel prompts for this session's tabs only, not other sessions'.
-      for (const [tabId, owner] of await listOwnedTabs()) {
-        if (owner.port === port) {
-          cancelSecureInputForTab(
-            tabId,
-            "The MCP session disconnected before the secret was submitted.",
-          );
+      const current = new Set(sessions.map((s) => s.id));
+      const owned = await listOwnedTabs();
+      for (const gone of previous.filter((p) => !current.has(p.id))) {
+        // Cancel prompts for this session's tabs only, not other sessions'.
+        for (const [tabId, owner] of owned) {
+          if (owner.session === gone.id) {
+            cancelSecureInputForTab(tabId, "The MCP session disconnected before the secret was submitted.");
+          }
         }
+        if (!missingSince.has(gone.id)) missingSince.set(gone.id, Date.now());
+      }
+      let renamed = false;
+      for (const s of sessions) {
+        missingSince.delete(s.id);
+        const before = previous.find((p) => p.id === s.id);
+        if (before?.name !== s.name) renamed = true;
+        // A new session reusing a number must not inherit the old one's tab.
+        await dropStaleOwnership(s.id);
+        if (!before) await pushStateTo(s.id);
+      }
+      if (renamed) await relabelAll();
+      notifyOutdatedServers(sessions);
+      if (sessions.length < previous.length) {
+        setTimeout(() => void sweepOrphanTabs(), RELEASE_GRACE_MS + 1_000);
       }
     })();
-    if (!missingSince.has(port)) missingSince.set(port, Date.now());
-    setTimeout(() => void sweepOrphanTabs(), RELEASE_GRACE_MS + 1_000);
   },
 });
 
@@ -191,59 +183,59 @@ setHubHooks({
 setDebuggerEventEmitter((event, payload, tabId) => {
   void (async () => {
     const owner = await getTabOwner(tabId);
-    if (owner) emitEventToPort(owner.port, event, payload);
+    if (owner) emitEventToSession(owner.session, event, payload);
   })();
 });
 initHubListeners();
 
-function ownerOf(port: number): TabOwner {
-  return { port, startedAt: identityOfPort(port)?.startedAt ?? null };
+function ownerOf(session: number): TabOwner {
+  return { session, startedAt: sessionInfo(session)?.startedAt ?? null };
 }
 
-/** A new MCP process reusing a port must not inherit the old process's tab. */
-async function dropStaleOwnership(port: number): Promise<void> {
-  const me = ownerOf(port);
+/** A new session reusing a number must not inherit the old session's tab. */
+async function dropStaleOwnership(session: number): Promise<void> {
+  const me = ownerOf(session);
   if (me.startedAt == null) return;
   for (const [tabId, o] of await listOwnedTabs()) {
-    if (o.port === port && o.startedAt != null && o.startedAt !== me.startedAt) {
+    if (o.session === session && o.startedAt != null && o.startedAt !== me.startedAt) {
       await setTabOwner(tabId, null);
     }
   }
 }
 
-async function stateFor(port: number): Promise<BridgeState> {
-  const tabId = await tabIdForOwner(ownerOf(port));
-  const base = await buildState(anyExtensionConnected(), tabId);
+async function stateFor(session: number): Promise<BridgeState> {
+  const tabId = await tabIdForOwner(ownerOf(session));
+  const base = await buildState(hubConnected(), tabId);
   return {
     ...base,
     debuggerAttached: tabId != null && isDebuggerAttached(tabId),
   };
 }
 
-async function pushStateTo(port: number): Promise<void> {
-  emitEventToPort(port, "state.changed", await stateFor(port));
+async function pushStateTo(session: number): Promise<void> {
+  emitEventToSession(session, "state.changed", await stateFor(session));
 }
 
 async function pushStateForTab(tabId: number): Promise<void> {
   const owner = await getTabOwner(tabId);
-  if (owner) await pushStateTo(owner.port);
+  if (owner) await pushStateTo(owner.session);
 }
 
-/** What browser_control_status returns now that each session owns a tab. */
-async function sessionStatus(port: number): Promise<unknown> {
-  const tabId = await tabIdForOwner(ownerOf(port));
+/** What browser_control_status returns: this session, its tab, and the others. */
+async function sessionStatus(session: number): Promise<unknown> {
+  const tabId = await tabIdForOwner(ownerOf(session));
   const tab = tabId != null ? await getTab(tabId) : null;
   const others = (await listOwnedTabs())
-    .filter(([, o]) => o.port !== port)
-    .map(([id, o]) => ({ tabId: id, session: labelForPort(o.port) }));
+    .filter(([, o]) => o.session !== session)
+    .map(([id, o]) => ({ tabId: id, session: labelForSession(o.session) }));
   return {
-    self: identityOfPort(port),
-    label: labelForPort(port),
+    self: sessionInfo(session),
+    label: labelForSession(session),
     connectedTab: tab
       ? { id: tab.id, url: tab.url, title: tab.title, active: tab.active }
       : null,
     otherSessions: others,
-    note: "Each MCP session owns its own Connected tab, so no control lease is needed. Use browser_connect_tab to take over an existing tab (the user is asked to Allow).",
+    note: "Each MCP session owns its own Connected tab. browser_open needs no permission; browser_connect_tab asks the user once per site, and always when another session holds the tab.",
   };
 }
 
@@ -819,43 +811,31 @@ async function cdpFrameIdForChromeFrame(
 
 async function handleRequest(
   msg: RequestMessage,
-  ws: WebSocket,
-  port: number,
+  session: number,
 ): Promise<void> {
-  const token = await getTokenForPort(port);
-  if (!token || msg.token !== token) {
-    respond(
-      ws,
-      msg.id,
-      false,
-      undefined,
-      bridgeError(ErrorCodes.UNAUTHORIZED, "Handshake token mismatch."),
-    );
-    return;
-  }
-
+  // The hub authenticated the agent; requests arrive tagged with its session.
   try {
     if (msg.method === "control.request" || msg.method === "control.status") {
-      respond(ws, msg.id, true, await sessionStatus(port));
+      respond(msg.id, true, await sessionStatus(session));
       return;
     }
     if (msg.method === "control.release") {
-      const own = await tabIdForOwner(ownerOf(port));
+      const own = await tabIdForOwner(ownerOf(session));
       if (own != null) await setTabOwner(own, null);
-      respond(ws, msg.id, true, await sessionStatus(port));
+      respond(msg.id, true, await sessionStatus(session));
       return;
     }
 
     const quiet = QUIET_METHODS.has(msg.method);
     const pulse = async () => {
       if (quiet) return;
-      const own = await tabIdForOwner(ownerOf(port));
+      const own = await tabIdForOwner(ownerOf(session));
       if (own != null) markActivity(own);
     };
     await pulse();
     try {
-      const result = await route(msg.method, msg.params ?? {}, port);
-      respond(ws, msg.id, true, result);
+      const result = await route(msg.method, msg.params ?? {}, session);
+      respond(msg.id, true, result);
     } finally {
       await pulse();
     }
@@ -868,14 +848,13 @@ async function handleRequest(
             ErrorCodes.UNKNOWN,
             err instanceof Error ? err.message : String(err),
           );
-    await setLastError(`${error.code}: ${error.message}`);
-    respond(ws, msg.id, false, undefined, error);
+    respond(msg.id, false, undefined, error);
   }
 }
 
 /** Give a tab to a session (user already consented or the agent created it). */
-async function assignTab(port: number, tabId: number): Promise<void> {
-  await setTabOwner(tabId, ownerOf(port));
+async function assignTab(session: number, tabId: number): Promise<void> {
+  await setTabOwner(tabId, ownerOf(session));
   try {
     await ensureContentScript(tabId);
   } catch {
@@ -883,42 +862,69 @@ async function assignTab(port: number, tabId: number): Promise<void> {
   }
 }
 
-/** browser_connect_tab: take over an existing tab, always with the user's Allow. */
+/** Sites where the user allowed agents to take free tabs without asking. */
+const ALLOWED_SITES_KEY = "allowedSites";
+
+async function isSiteAllowed(host: string): Promise<boolean> {
+  const data = await chrome.storage.local.get(ALLOWED_SITES_KEY);
+  return ((data[ALLOWED_SITES_KEY] ?? []) as string[]).includes(host);
+}
+
+async function allowSite(host: string): Promise<void> {
+  const data = await chrome.storage.local.get(ALLOWED_SITES_KEY);
+  const sites = new Set((data[ALLOWED_SITES_KEY] ?? []) as string[]);
+  sites.add(host);
+  await chrome.storage.local.set({ [ALLOWED_SITES_KEY]: [...sites].sort() });
+}
+
+function consentError(answer: "denied" | "timeout"): BridgeError {
+  return answer === "timeout"
+    ? bridgeError(
+        ErrorCodes.CONTROL_REQUEST_TIMEOUT,
+        "No answer to the Allow/Deny notification within 60s (the user may not have seen it). Ask the user, then call browser_connect_tab again.",
+      )
+    : bridgeError(ErrorCodes.CONTROL_DENIED, "The user denied this session that tab.");
+}
+
+/**
+ * browser_connect_tab: take over an existing tab.
+ *  - a tab another session holds: always asks;
+ *  - a free tab: asks the first time on each site, then that site is allowed;
+ *  - BROWSER_MCP_AUTO_ALLOW sessions never ask.
+ */
 async function connectExistingTab(
-  port: number,
+  session: number,
   tabId: number,
 ): Promise<unknown> {
   const tab = await assertConnectable(tabId);
-  const me = ownerOf(port);
+  const me = ownerOf(session);
   const current = await getTabOwner(tabId);
-  if (!sameOwner(current, me) && isPortAutoAllowed(port)) {
-    // Trusted auto-allow instance: take the tab over without prompting.
-    await assignTab(port, tabId);
-  } else if (!sameOwner(current, me)) {
-    let origin = tab.url ?? "";
+  if (!sameOwner(current, me)) {
+    let host = tab.url ?? "";
     try {
-      origin = new URL(tab.url ?? "").host;
+      host = new URL(tab.url ?? "").hostname;
     } catch {
       // keep raw
     }
-    const answer = await askUserConsent(
-      "browser-mcp: connect a tab",
-      `${labelForPort(port)} wants to control "${tab.title ?? "tab"}" (${origin}).` +
-        (current ? `\nCurrently controlled by ${labelForPort(current.port)}.` : ""),
-    );
-    if (answer === "timeout") {
-      throw bridgeError(
-        ErrorCodes.CONTROL_REQUEST_TIMEOUT,
-        "No answer to the Allow/Deny notification within 60s (the user may not have seen it). Ask the user, then call browser_connect_tab again.",
+    const title = tab.title ?? "tab";
+    if (isSessionAutoAllowed(session)) {
+      // Trusted unattended session: no prompt.
+    } else if (current) {
+      const answer = await askUserConsent(
+        "browser-mcp: take over a tab",
+        `${labelForSession(session)} wants "${title}" (${host}), which ${labelForSession(current.session)} is using.`,
       );
-    }
-    if (answer === "denied") {
-      throw bridgeError(
-        ErrorCodes.CONTROL_DENIED,
-        "The user denied this session control of that tab.",
+      if (answer !== "allowed") throw consentError(answer);
+    } else if (!(await isSiteAllowed(host))) {
+      const answer = await askUserConsent(
+        "browser-mcp: use a site",
+        `${labelForSession(session)} wants to use "${title}" on ${host}. Allow lets agents use ${host} tabs without asking again.`,
+        "Allow for this site",
       );
+      if (answer !== "allowed") throw consentError(answer);
+      await allowSite(host);
     }
-    await assignTab(port, tabId);
+    await assignTab(session, tabId);
   }
   const updated = await getTab(tabId);
   return {
@@ -934,7 +940,7 @@ async function connectExistingTab(
  * debugger is attached *before* navigating, so the page's own load is captured.
  */
 async function openAndConnectTab(
-  port: number,
+  session: number,
   url: string,
   active: boolean,
   recordNetwork: boolean,
@@ -961,7 +967,7 @@ async function openAndConnectTab(
   }
   const tabId = created.id;
   if (recordNetwork) {
-    await setTabOwner(tabId, ownerOf(port));
+    await setTabOwner(tabId, ownerOf(session));
     await attachDebugger(tabId);
     await chrome.tabs.update(tabId, { url });
   }
@@ -975,7 +981,7 @@ async function openAndConnectTab(
       "Opened tab landed on a restricted URL.",
     );
   }
-  await assignTab(port, tabId);
+  await assignTab(session, tabId);
   return {
     url: updated.url,
     title: updated.title,
@@ -1024,32 +1030,32 @@ async function withNavigationWait(
 async function route(
   method: string,
   params: Record<string, unknown>,
-  port: number,
+  session: number,
 ): Promise<unknown> {
-  const me = ownerOf(port);
+  const me = ownerOf(session);
   switch (method) {
     case "ping":
       return { ok: true, t: Date.now() };
 
     case "state.get":
-      return stateFor(port);
+      return stateFor(session);
 
     case "tabs.connect":
-      return connectExistingTab(port, Number(params.tabId));
+      return connectExistingTab(session, Number(params.tabId));
 
     case "tabs.disconnect": {
       const own = await tabIdForOwner(me);
       if (own != null) await setTabOwner(own, null);
-      return stateFor(port);
+      return stateFor(session);
     }
 
     case "tabs.list":
-      return listTabs(me, !!params.includeOthers, labelForPort);
+      return listTabs(me, !!params.includeOthers, labelForSession);
 
     case "tabs.open": {
       const url = String(params.url);
       return openAndConnectTab(
-        port,
+        session,
         url,
         params.active !== false,
         params.recordNetwork === true,
@@ -1061,7 +1067,7 @@ async function route(
       const recordNetwork = params.recordNetwork === true;
       const existingId = await tabIdForOwner(me);
       if (existingId == null) {
-        return openAndConnectTab(port, url, true, recordNetwork);
+        return openAndConnectTab(session, url, true, recordNetwork);
       }
       const tab = await requireTabFor(me);
       if (isRestrictedUrl(url)) {
@@ -1071,7 +1077,7 @@ async function route(
       await chrome.tabs.update(tab.id!, { url });
       await waitForLoad(tab.id!, "complete");
       const updated = await chrome.tabs.get(tab.id!);
-      await pushStateTo(port);
+      await pushStateTo(session);
       return {
         url: updated.url,
         title: updated.title,
@@ -1086,7 +1092,7 @@ async function route(
       await chrome.tabs.goBack(tab.id!);
       await waitForLoad(tab.id!, "complete");
       const updated = await chrome.tabs.get(tab.id!);
-      await pushStateTo(port);
+      await pushStateTo(session);
       return { url: updated.url, title: updated.title };
     }
 
@@ -1095,7 +1101,7 @@ async function route(
       await chrome.tabs.goForward(tab.id!);
       await waitForLoad(tab.id!, "complete");
       const updated = await chrome.tabs.get(tab.id!);
-      await pushStateTo(port);
+      await pushStateTo(session);
       return { url: updated.url, title: updated.title };
     }
 
@@ -1473,7 +1479,7 @@ async function route(
     case "debugger.attach": {
       const tab = await requireTabFor(me);
       const r = await attachDebugger(tab.id!);
-      await pushStateTo(port);
+      await pushStateTo(session);
       return r;
     }
 
@@ -1481,7 +1487,7 @@ async function route(
       const tabId = await tabIdForOwner(me);
       const r =
         tabId != null ? await detachDebugger(tabId) : { attached: false };
-      await pushStateTo(port);
+      await pushStateTo(session);
       return r;
     }
 
@@ -1792,7 +1798,6 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
     // about:blank is the transient start page of browser_open(recordNetwork).
     if (info.url && info.url !== "about:blank" && isRestrictedUrl(info.url)) {
       await setTabOwner(tabId, null);
-      await setLastError("Auto-disconnected: restricted URL.");
       return;
     }
     if (info.status === "complete" || info.title || info.url) {
@@ -1827,23 +1832,6 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
 }
 
 /** Session the popup's Connect button assigns tabs to. */
-async function popupTargetPort(): Promise<number> {
-  const live = connectedPorts();
-  const preferred = await getControllerPort();
-  if (preferred != null && live.includes(preferred)) return preferred;
-  if (live.length === 1) return live[0]!;
-  if (live.length === 0) {
-    throw bridgeError(
-      ErrorCodes.EXTENSION_DISCONNECTED,
-      "No MCP session is connected to the extension.",
-    );
-  }
-  throw bridgeError(
-    ErrorCodes.UNKNOWN,
-    "Several MCP sessions are connected. Click a session card to choose a Connect target first.",
-  );
-}
-
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.target !== "sw") return false;
   void (async () => {
@@ -1860,21 +1848,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           );
           return;
         }
-      }
-
-      if (typeof msg.type === "string" && msg.type.startsWith("update.")) {
-        const status =
-          msg.type === "update.check"
-            ? await checkForUpdates(true)
-            : msg.type === "update.install"
-              ? await installUpdate()
-              : msg.type === "update.skip"
-                ? await skipUpdate()
-                : msg.type === "update.dismiss"
-                  ? await dismissUpdateMessages()
-                  : await updateStatus();
-        sendResponse({ ok: true, update: status });
-        return;
       }
 
       if (msg.type === "picker.picked") {
@@ -1909,46 +1882,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
         return;
       }
-      if (msg.type === "getPopupState") {
-        const port = (await getControllerPort()) ?? Number(DEFAULT_WS_PORT);
-        const storage = await chrome.storage.local.get(["lastError", "wsPort"]);
+      if (msg.type === "popup.state") {
+        // Only agents that hold a tab right now, anywhere in the browser.
+        const agents: Array<{ session: number; name: string; color: string; tabId: number }> = [];
+        const owned = await listOwnedTabs();
+        for (const [tabId, owner] of owned) {
+          if (!(await getTab(tabId))) continue;
+          agents.push({
+            session: owner.session,
+            name: labelForSession(owner.session),
+            color: colorFor(owner.session).hex,
+            tabId,
+          });
+        }
+        agents.sort((a, b) => a.session - b.session);
         const active = await activeTab();
-        const owner = active?.id != null ? await getTabOwner(active.id) : null;
-        const state = await buildState(
-          anyExtensionConnected(),
-          owner ? active!.id! : null,
-        );
         sendResponse({
           ok: true,
-          bridgeStatus: summaryBridgeStatus(),
-          lastError: storage.lastError ?? null,
-          port: storage.wsPort ?? port,
-          pendingLabel: pendingControlLabel(),
-          state: {
-            ...state,
-            debuggerAttached: owner ? isDebuggerAttached(active!.id!) : false,
-          },
-          ownerLabel: owner ? labelForPort(owner.port) : null,
-          sessionCount: (await listOwnedTabs()).length,
-          pinCount: owner ? pinCount(active!.id!) : 0,
-          activeTab: active
-            ? {
-                id: active.id,
-                title: active.title,
-                url: active.url,
-                restricted: isRestrictedUrl(active.url),
-              }
-            : null,
+          version: chrome.runtime.getManifest().version,
+          hubConnected: hubConnected(),
+          hubMismatch: hubMismatch(),
+          agents,
+          activeTabHeld: active?.id != null && owned.some(([id]) => id === active.id),
         });
-        return;
-      }
-      if (msg.type === "connectActive") {
-        const active = await activeTab();
-        if (!active?.id) throw bridgeError(ErrorCodes.TAB_GONE, "No active tab.");
-        await assertConnectable(active.id);
-        // The user clicked Connect themselves, so no extra consent prompt.
-        await assignTab(await popupTargetPort(), active.id);
-        sendResponse({ ok: true });
         return;
       }
       if (msg.type === "disconnect") {
@@ -1979,64 +1935,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, result });
         return;
       }
-      if (msg.type === "detachDebugger") {
-        const active = await activeTab();
-        if (!active?.id || !(await getTabOwner(active.id))) {
-          throw bridgeError(
-            ErrorCodes.NO_CONNECTED_TAB,
-            "Connect this tab first.",
-          );
-        }
-        await detachDebugger(active.id);
-        sendResponse({ ok: true });
-        return;
-      }
-      if (msg.type === "listBridges") {
-        const bridges = await refreshBridges();
-        const owned = await listOwnedTabs();
-        const withTabs = await Promise.all(
-          bridges.map(async (b) => {
-            const entry = owned.find(([, o]) => o.port === b.port);
-            const tab = entry ? await getTab(entry[0]) : null;
-            return {
-              ...b,
-              tabTitle: tab?.title ?? null,
-              tabUrl: tab?.url ?? null,
-            };
-          }),
-        );
-        sendResponse({
-          ok: true,
-          bridges: withTabs,
-          activePort: await getControllerPort(),
-          pendingLabel: pendingControlLabel(),
-        });
-        return;
-      }
-      if (msg.type === "setPort" || msg.type === "controlPort") {
-        const next = Number(msg.port);
-        if (!Number.isInteger(next) || next < 1 || next > 65535) {
-          sendResponse({ ok: false, error: "Invalid port." });
-          return;
-        }
-        const bridges = await setManualControl(next);
-        sendResponse({
-          ok: true,
-          bridges,
-          activePort: next,
-          pendingLabel: pendingControlLabel(),
-        });
-        return;
-      }
-      if (msg.type === "reconnect") {
-        await reconnectAll();
-        sendResponse({ ok: true });
-        return;
-      }
       sendResponse({ ok: false, error: "unknown" });
     } catch (err) {
       const e = err as BridgeError;
-      await setLastError(e.message ?? String(err));
       sendResponse({
         ok: false,
         error: e.message ?? String(err),
@@ -2049,7 +1950,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "keepalive") {
-    void startHub().then(() => sweepOrphanTabs());
+    startHub();
+    void sweepOrphanTabs();
   } else if (alarm.name === UPDATE_ALARM) {
     void checkForUpdates();
   }
@@ -2057,16 +1959,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create("keepalive", { periodInMinutes: 0.5 });
-  void startHub();
+  startHub();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void chrome.alarms.create("keepalive", { periodInMinutes: 0.5 });
-  void startHub();
+  startHub();
 });
 
 void chrome.alarms.create("keepalive", { periodInMinutes: 0.5 });
-void startHub();
+startHub();
 initUpdateListeners();
 void chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: 60 });
 void verifyAppliedUpdate().then(() => checkForUpdates());
@@ -2074,7 +1976,7 @@ void (async () => {
   // SW restarts lose in-memory indicator state; restore it for owned tabs.
   await chrome.action.setBadgeText({ text: "" }).catch(() => undefined);
   for (const [tabId, owner] of await listOwnedTabs()) {
-    if (await getTab(tabId)) await setTabIndicator(tabId, owner.port);
+    if (await getTab(tabId)) await setTabIndicator(tabId, owner.session);
     else await setTabOwner(tabId, null);
   }
 })();

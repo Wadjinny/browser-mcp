@@ -10,9 +10,9 @@ import {
   textResult,
   type ToolResult,
 } from "./tools/helpers.js";
-import { getBridge } from "./ws-bridge.js";
+import { getBridge } from "./hub-client.js";
 import {
-  CONTROL_REQUEST_TIMEOUT_MS,
+  CONSENT_TIMEOUT_MS,
   ErrorCodes,
   MAX_NETWORK_WAIT_FOR_MS,
   PICK_ELEMENT_TIMEOUT_MS,
@@ -55,9 +55,10 @@ Secrets: never ask the user to paste a password, OTP, API key or other secret in
 
 Etiquette:
 - Each MCP session controls its own tab, marked in Chrome with a coloured tab group and border. browser_open replaces your previous tab; other sessions' tabs are not yours.
-- To work in a tab the user already has open, call browser_tabs({includeOthers:true}) then browser_connect_tab(tabId); the user must click Allow in a Chrome notification (60s).
+- To work in a tab the user already has open, call browser_tabs({includeOthers:true}) then browser_connect_tab(tabId). The first time you take a tab on a site, the user is asked once in a Chrome notification (60s); after Allow, tabs on that site are free. Taking a tab another session controls always asks.
 - Screenshots need the tab in front (open with active:true).
-- Call browser_disconnect when you are done with the browser.`;
+- Call browser_disconnect when you are done with the browser.
+- If a tool fails with EXTENSION_VERSION_MISMATCH, call browser_update_extension once, then retry.`;
 
 export function createMcpServer(): McpServer {
   const server = new McpServer(
@@ -74,7 +75,7 @@ export function createMcpServer(): McpServer {
 
   server.tool(
     "browser_connect_tab",
-    "Take over an existing Chrome tab (id from browser_tabs includeOthers) as this session's Connected tab. Always asks the user to Allow via a Chrome notification; replaces this session's previous Connected tab.",
+    "Take over an existing Chrome tab (id from browser_tabs includeOthers) as this session's Connected tab; replaces this session's previous Connected tab. Asks the user in a Chrome notification the first time an agent takes a tab on that site, and always when another session controls the tab.",
     { tabId: z.number().int().describe("Tab id from browser_tabs") },
     async ({ tabId }) =>
       wrap(async () =>
@@ -82,10 +83,17 @@ export function createMcpServer(): McpServer {
           await callExt(
             "tabs.connect",
             { tabId },
-            CONTROL_REQUEST_TIMEOUT_MS + 5_000,
+            CONSENT_TIMEOUT_MS + 5_000,
           ),
         ),
       ),
+  );
+
+  server.tool(
+    "browser_update_extension",
+    "Install the browser-mcp Chrome extension release that matches this server and make Chrome reload it. Use when a browser tool fails with EXTENSION_VERSION_MISMATCH (the extension and server versions don't match). Downloads from the project's GitHub releases into the extension folder.",
+    {},
+    async () => wrap(async () => textResult(await getBridge().updateExtension())),
   );
 
   server.tool(
@@ -106,7 +114,7 @@ export function createMcpServer(): McpServer {
           await callExt(
             "control.request",
             {},
-            CONTROL_REQUEST_TIMEOUT_MS + 5_000,
+            CONSENT_TIMEOUT_MS + 5_000,
           ),
         ),
       ),

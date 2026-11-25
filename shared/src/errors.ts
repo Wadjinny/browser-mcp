@@ -23,6 +23,7 @@ export const ErrorCodes = {
   CONTROL_DENIED: "CONTROL_DENIED",
   CONTROL_REQUEST_TIMEOUT: "CONTROL_REQUEST_TIMEOUT",
   CONTROL_REQUEST_PENDING: "CONTROL_REQUEST_PENDING",
+  EXTENSION_VERSION_MISMATCH: "EXTENSION_VERSION_MISMATCH",
   UNKNOWN: "UNKNOWN",
 } as const;
 
@@ -76,5 +77,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
     "Timed out waiting for the user to Allow or Deny the control request.",
   CONTROL_REQUEST_PENDING:
     "Another instance already has a control request waiting for the user. Retry after that prompt is resolved.",
+  EXTENSION_VERSION_MISMATCH:
+    "The browser-mcp extension doesn't match this server's version. Call browser_update_extension to install the matching extension.",
   UNKNOWN: "Unknown error.",
 };

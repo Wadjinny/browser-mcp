@@ -2,37 +2,43 @@
 
 How to work with browser-mcp once it's installed. For setup, see the [README](../README.md).
 
+## How it connects
+
+Each agent's MCP server (`tabmcp`) connects to a small local **hub** on `127.0.0.1:17373`, and the extension connects to the same hub. The first agent that uses the browser starts the hub in the background. The hub stops on its own a minute after the last agent leaves. Its log is `~/.config/browser-mcp/hub.log`.
+
+Agents are told apart by name: `BROWSER_MCP_NAME` if set, otherwise the agent's own name (`claude-code`, `cursor`, ...). A second agent with the same name becomes `claude-code 2`. There is no limit on how many agents run at once.
+
 ## Connect a tab
 
-An agent only works in a tab that is connected to its session. There are three ways to connect one:
+An agent only works in its own tab:
 
-- Open the site in Chrome, click the **browser-mcp** icon, then **Connect this tab**.
-- Ask the agent to open a URL (`browser_open` / `browser_navigate`). It creates a tab and connects it.
-- Ask the agent to take over a tab you already have open (`browser_connect_tab`, with the id from `browser_tabs` with `includeOthers`). You click **Allow** in a Chrome notification.
+- **New tab:** the agent opens a URL (`browser_open` / `browser_navigate`). No prompt.
+- **A tab you already have open:** the agent takes it with `browser_connect_tab` (tab id from `browser_tabs` with `includeOthers`).
+  - The first time an agent takes a tab on a site, Chrome asks. **Allow for this site** lets agents use that site's tabs without asking again.
+  - Taking a tab another agent is using always asks.
+- DevTools (network, console, debugger) on its own tab needs no prompt. Chrome shows its own "started debugging this browser" bar.
 
-Restricted URLs (`chrome://`, extension pages, the Web Store) can't be opened or connected.
+Restricted URLs (`chrome://`, extension pages, the Web Store) can't be opened or taken.
 
-Disconnecting (popup, the pill's **Stop** button, or `browser_disconnect`) releases the tab and detaches the debugger.
+The **Stop** button on the tab's pill, or `browser_disconnect`, releases the tab and detaches the debugger.
 
-## Several sessions in parallel
+## Several agents in parallel
 
-Every MCP session (Claude Code, Cursor, …) owns **its own** connected tab, so several agents can work side by side without prompts or a shared lease:
-
-- Each session has at most one tab. `browser_open` / `browser_connect_tab` replace that session's previous tab.
-- Network and console buffers, pins and the element picker are per tab, and DevTools events go only to the session that owns the tab.
-- Taking over an existing tab (`browser_connect_tab`) always asks you to **Allow**. If another session owns it, the notification says so.
-- The popup's **Connect this tab** card gives the active tab to the session marked **Connect target** (click another session card to change it). If only one session is connected, it is picked automatically. Popup commands (Stop, Pick element, Hand this tab, Detach debugger) also work from the keyboard.
-- If a session's MCP server goes away, its tab is released after 60 s. A restart within that window keeps the tab. A new process that reuses the port does not inherit the old process's tab.
+- Each agent has at most one tab. `browser_open` / `browser_connect_tab` replace that agent's previous tab.
+- Network and console buffers, pins and the element picker are per tab, and DevTools events go only to the agent that owns the tab.
+- If an agent goes away, its tab is released after 60 s. If the hub restarts, agents reconnect and keep their tabs.
 - `browser_request_control` / `browser_release_control` remain as legacy aliases (status / disconnect).
 
-Up to 20 servers can run at once, on ports `17373`–`17392`. The extension connects to all of them.
+## The popup
+
+The toolbar popup lists the agents controlling a tab right now, each with its colour and name. When the current tab is controlled, it also has **Pick element**. With no agent controlling a tab, it shows only the extension version. Update offers and other notices come as Chrome notifications.
 
 ## Controlled-tab indicator
 
 Every connected tab is visibly marked, in a colour per session:
 
-- It moves into a **🤖 `name :port`** tab group in that session's colour (tabs already in one of your own groups stay where they are) and leaves the group on disconnect.
-- The page gets a matching border and a bottom pill, "`name :port` is controlling this tab", with **Stop** and collapse buttons. The border pulses while an agent command runs.
+- It moves into a **🤖 `name`** tab group in that session's colour (tabs already in one of your own groups stay where they are) and leaves the group on disconnect.
+- The page gets a matching border and a bottom pill, "`name` is controlling this tab", with **Stop** and collapse buttons. The border pulses while an agent command runs.
 - The toolbar badge shows **ON** only on connected tabs.
 
 The overlay sits in a closed shadow root outside `<body>`, so snapshots and find don't see it. It is hidden while screenshots are taken.
@@ -69,7 +75,7 @@ After connecting, use **Pick element** in the popup (or have the agent call `bro
 
 ## Tools
 
-**Session**: `browser_connect_tab`, `browser_disconnect`, `browser_control_status` (legacy: `browser_request_control`, `browser_release_control`)
+**Session**: `browser_connect_tab`, `browser_disconnect`, `browser_control_status`, `browser_update_extension` (legacy: `browser_request_control`, `browser_release_control`)
 
 **Automation** (no debugger needed): `browser_tabs`, `browser_open`, `browser_navigate`, `browser_go_back` / `browser_go_forward`, `browser_wait`, `browser_snapshot`, `browser_click`, `browser_hover`, `browser_drag`, `browser_type`, `browser_type_secure`, `browser_press_key`, `browser_screenshot`, `browser_console_messages`, `browser_pick_element`, `browser_pick_cancel`, `browser_pins`, `browser_pin_inspect`, `browser_pin_clear`
 
@@ -85,9 +91,9 @@ All settings are environment variables on the MCP server, and all are optional.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `BROWSER_MCP_NAME` | project folder | Label for this session in the popup, tab group and notifications. Always shown with `:port`. |
-| `BROWSER_MCP_AUTO_ALLOW` | off | `1`/`true`/`yes`/`on` lets the extension grant **this** session's tab takeovers without an Allow/Deny prompt. See [Auto-allow](#auto-allow). |
-| `BROWSER_MCP_WS_PORT` | `17373` | Preferred port. If it's busy, the server takes the next free one in `17373`–`17392`. |
+| `BROWSER_MCP_NAME` | the agent's name | Name for this session in the popup, tab group and notifications, e.g. `claude-code`. Duplicates get a number. |
+| `BROWSER_MCP_AUTO_ALLOW` | off | `1`/`true`/`yes`/`on` lets **this** session take tabs without any Allow/Deny prompt. See [Auto-allow](#auto-allow). |
+| `BROWSER_MCP_PORT` | `17373` | Port of the hub. The extension always uses 17373, so only change it for testing. |
 | `BROWSER_MCP_LAUNCH_CHROME` | on | `0`/`false`/`off` stops the server from starting Chrome itself. |
 | `BROWSER_MCP_CHROME_BIN` | auto-detected | Browser executable, e.g. `/usr/bin/google-chrome`. |
 | `BROWSER_MCP_CHROME_PROFILE` | Chrome's default | `--profile-directory` value, e.g. `Default` or `Profile 1`. |
@@ -95,9 +101,9 @@ All settings are environment variables on the MCP server, and all are optional.
 | `BROWSER_MCP_CHROME_ARGS` | none | Extra Chrome flags, e.g. `--start-maximized`. |
 | `BROWSER_MCP_CHROME_EXTENSION` | none | Unpacked extension folder to force-load with `--load-extension` (Chromium / Chrome for Testing). |
 | `BROWSER_MCP_CHROME_CONNECT_TIMEOUT_MS` | `25000` | How long to wait for the extension after launching Chrome. |
-| `BROWSER_MCP_EXTENSION_DIR` | `~/.config/browser-mcp/extension` | Where `install-extension` and the popup's **Update** button put the extension. |
+| `BROWSER_MCP_EXTENSION_DIR` | `~/.config/browser-mcp/extension` | Where `install-extension` and the **Update now** notification put the extension. |
 | `BROWSER_MCP_UPDATE_CHECK` | on | `0`/`false`/`off` stops the server checking npm for a newer version. |
-| `BROWSER_MCP_TOKEN` / `BROWSER_MCP_TOKEN_FILE` | `~/.config/browser-mcp/token` | The server's handshake token, or the file it's kept in. |
+| `BROWSER_MCP_TOKEN` / `BROWSER_MCP_TOKEN_FILE` | `~/.config/browser-mcp/token` | The token agents use to join the hub, or the file it's kept in. |
 
 ### Starting Chrome
 
@@ -105,18 +111,19 @@ If Chrome is closed when a browser tool is called, the server starts it with you
 
 ### Auto-allow
 
-Normally you have to click Allow when a session wants to take over a tab. In an unattended session (no display, or you're driving the agent remotely) nobody can click, so the request times out.
+Normally Chrome asks you when an agent takes a tab on a new site, or a tab another agent is using. In an unattended session (no display, or you're driving the agent remotely) nobody can click, so the request times out.
 
 Set `BROWSER_MCP_AUTO_ALLOW=1` on a session you trust to drive the browser unattended. The extension then grants that session's requests without a prompt. It is opt-in and per session: every other session still asks.
 
-> **Security:** the session declares this flag itself, so it's a convenience for *your own* trusted sessions, not a protection against hostile programs on your machine (which could set it too). The real protections don't change: the server only listens on `127.0.0.1`, and every server needs its own handshake token. Leave it off unless nobody can answer the prompt.
+> **Security:** the session declares this flag itself, so it's a convenience for *your own* trusted sessions, not a protection against hostile programs on your machine (which could set it too). The real protections don't change: the hub only listens on `127.0.0.1`, agents need the token file, and only the extension can use the extension endpoint. Leave it off unless nobody can answer the prompt.
 
 ## Updates
 
-**Extension:** release builds check GitHub for a newer release every few hours. When there is one, Chrome shows a notification and the popup shows a banner with **Update** and **Skip**. Nothing installs until you click **Update**. A running browser-mcp server then downloads the release into the extension folder and the extension reloads itself. Settings in the popup shows the current version and has a **Check for updates** button.
+**Extension:** release builds check GitHub for a newer release every few hours. When there is one, Chrome shows a notification with **Update now** and **Skip this version**. Nothing installs until you click **Update now**. The hub then downloads the release into the extension folder and the extension reloads itself. The hub only runs while an agent is connected, so updating needs one.
 
-- Updates only take effect if Chrome loads the extension from `~/.config/browser-mcp/extension` (or `BROWSER_MCP_EXTENSION_DIR`). If you loaded it from somewhere else, the popup tells you where the update went.
+- Updates only take effect if Chrome loads the extension from `~/.config/browser-mcp/extension` (or `BROWSER_MCP_EXTENSION_DIR`). If you loaded it from somewhere else, a notification tells you where the update went.
 - A release that needs a newer server is refused, with a message to update the server first.
-- The zip is also attached to each [GitHub release](https://github.com/Wadjinny/browser-mcp/releases/latest), but a copy you unzip yourself can't be updated from the popup.
+- **Version mismatch:** if the extension and the server don't speak the same protocol, the hub refuses the extension and the popup's dot turns red. Browser tools then fail with `EXTENSION_VERSION_MISMATCH`, and the agent can call `browser_update_extension`: it installs the extension release with the server's own version and tells the extension to reload. A notification tells you when that happened.
+- The zip is also attached to each [GitHub release](https://github.com/Wadjinny/browser-mcp/releases/latest), but a copy you unzip yourself can't be updated in place.
 
-**Server:** with `npx -y tabmcp@latest`, every new agent session starts the newest version. With a global install (`npm i -g tabmcp`, then `"command": "tabmcp"`), update with the same command. The server checks npm every few hours, and the popup lists any outdated sessions.
+**Server:** with `npx -y tabmcp@latest`, every new agent session starts the newest version. With a global install (`npm i -g tabmcp`, then `"command": "tabmcp"`), update with the same command. The server checks npm every few hours, and a notification lists any outdated agents. A running hub keeps its version until it stops, a minute after the last agent leaves.

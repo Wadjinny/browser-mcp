@@ -50,7 +50,7 @@ Ask your agent things like:
 ## Updates
 
 - **Server:** `npx -y tabmcp@latest` runs the newest version every time your agent starts.
-- **Extension:** when a new release is out, Chrome shows a notification and the extension popup shows an **Update** button. Nothing installs until you click it.
+- **Extension:** when a new release is out, Chrome shows a notification with **Update now**. Nothing installs until you click it.
 
 ## Configuration
 
@@ -58,8 +58,8 @@ Set these as environment variables on the MCP server (`env` in the JSON above). 
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `BROWSER_MCP_NAME` | project folder | Label for this session in the popup, tab group and prompts. |
-| `BROWSER_MCP_AUTO_ALLOW` | off | `1` lets this session take over tabs without an Allow/Deny prompt, for unattended agents. Only use it for sessions you trust. |
+| `BROWSER_MCP_NAME` | the agent's name | Name for this session in the popup, tab group and prompts, e.g. `claude-code`. |
+| `BROWSER_MCP_AUTO_ALLOW` | off | `1` lets this session take tabs without any Allow/Deny prompt, for unattended agents. Only use it for sessions you trust. |
 | `BROWSER_MCP_LAUNCH_CHROME` | on | `0` stops the server from starting Chrome itself. |
 | `BROWSER_MCP_CHROME_PROFILE` | Chrome's default | Profile to launch, e.g. `Profile 1`. |
 
@@ -67,8 +67,8 @@ See [all settings](https://github.com/Wadjinny/browser-mcp/blob/main/docs/usage.
 
 ## Security
 
-- Everything stays on your machine. The server only listens on `127.0.0.1`, each server needs its own token, and nothing goes through a cloud relay.
-- An agent can only act on its own connected tab. Taking over any other tab asks you first.
+- Everything stays on your machine. Agents and the extension meet in a small local hub on `127.0.0.1`, agents need a token to join, and nothing goes through a cloud relay.
+- An agent can open new tabs freely, but only acts on its own tab. Taking one of your open tabs asks once per site; taking another agent's tab always asks.
 - Secrets typed through the secure window go straight to the page and never enter the agent's context. The website still receives them as normal.
 
 ## Limitations
