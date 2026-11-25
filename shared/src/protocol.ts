@@ -70,6 +70,10 @@ export type BridgeIdentity = {
    * omit the field, so treat `undefined` as false.
    */
   autoAllow?: boolean;
+  /** Server package version ("dev" from source). Older bridges omit it. */
+  version?: string;
+  /** Newer server version published on npm, if this one is outdated. */
+  latestVersion?: string | null;
 };
 
 /** Parse a boolean-ish env value (`1/true/yes/on`). Default false. */
@@ -118,6 +122,45 @@ export const SECURE_INPUT_TIMEOUT_MS = 120_000;
 /** Max `waitForMs` for network.list; bridge timeout is waitForMs + slack. */
 export const MAX_NETWORK_WAIT_FOR_MS = 300_000;
 export const PROTOCOL_VERSION = 1;
+
+/** GitHub repo whose releases carry the prebuilt extension zip. */
+export const UPDATE_REPO = "Wadjinny/browser-mcp";
+
+/**
+ * Written to `build-info.json` in every extension build. `channel` is
+ * "release" only for CI builds of a `v*` tag; local builds are "dev" and never
+ * offer updates.
+ */
+export type ExtensionBuildInfo = {
+  version: string;
+  channel: "release" | "dev";
+  protocolVersion: number;
+};
+
+/** `v1.2.3` / `1.2.3` -> `1.2.3`; null for anything Chrome can't use as a version. */
+export function versionFromTag(tag: string): string | null {
+  const v = tag.trim().replace(/^v/, "");
+  return /^\d+(\.\d+){0,3}$/.test(v) ? v : null;
+}
+
+/** Compare dotted numeric versions: <0 if a<b, 0 if equal, >0 if a>b. */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** Body of `POST /update` (extension -> server). */
+export type UpdateRequest = { token: string; tag: string };
+
+/** Reply of `POST /update`. */
+export type UpdateResponse =
+  | { ok: true; version: string; dir: string }
+  | { ok: false; error: string };
 
 export type PinDescriptor = {
   id: string;

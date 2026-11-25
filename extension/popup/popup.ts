@@ -1,4 +1,4 @@
-import { projectOfCwd, sessionColor } from "@browser-mcp/shared";
+import { compareVersions, projectOfCwd, sessionColor } from "@browser-mcp/shared";
 
 type PopupState = {
   bridgeStatus: "connected" | "disconnected" | "reconnecting";
@@ -29,10 +29,22 @@ type Bridge = {
   startedAt: number;
   preferredPort: number;
   name: string | null;
+  version: string | null;
+  latestVersion: string | null;
   extensionConnected: boolean;
   controlling: boolean;
   tabTitle?: string | null;
   tabUrl?: string | null;
+};
+
+type UpdateStatus = {
+  channel: "release" | "dev";
+  current: string;
+  available: { version: string; tag: string; url: string } | null;
+  checkedAt: number | null;
+  installing: boolean;
+  warning: string | null;
+  error: string | null;
 };
 
 type Item = {
@@ -68,6 +80,16 @@ const els = {
   btnApplyPort: document.getElementById("btn-apply-port") as HTMLButtonElement,
   btnReconnect: document.getElementById("btn-reconnect") as HTMLButtonElement,
   btnRefresh: document.getElementById("btn-refresh") as HTMLButtonElement,
+  serverNote: document.getElementById("server-note")!,
+  update: document.getElementById("update")!,
+  updateText: document.getElementById("update-text")!,
+  btnUpdate: document.getElementById("btn-update") as HTMLButtonElement,
+  btnUpdateSkip: document.getElementById("btn-update-skip") as HTMLButtonElement,
+  updateNote: document.getElementById("update-note")!,
+  updateNoteText: document.getElementById("update-note-text")!,
+  btnUpdateDismiss: document.getElementById("btn-update-dismiss") as HTMLButtonElement,
+  versionText: document.getElementById("version-text")!,
+  btnUpdateCheck: document.getElementById("btn-update-check") as HTMLButtonElement,
 };
 
 let popup: PopupState | null = null;
@@ -809,6 +831,7 @@ async function refreshBridges(force = false): Promise<void> {
     }>({ type: "listBridges" });
     if (res.ok && res.bridges) {
       bridges = res.bridges;
+      paintServerNote();
       if (popup && res.pendingLabel !== undefined) {
         popup.pendingLabel = res.pendingLabel;
       }
@@ -819,7 +842,66 @@ async function refreshBridges(force = false): Promise<void> {
   }
 }
 
+/** Servers can't update themselves mid-session: tell the user how. */
+function paintServerNote(): void {
+  const outdated = (bridges ?? []).filter(
+    (b) =>
+      b.version && b.version !== "dev" && b.latestVersion &&
+      compareVersions(b.latestVersion, b.version) > 0,
+  );
+  els.serverNote.hidden = outdated.length === 0;
+  if (outdated.length === 0) return;
+  const latest = outdated[0]!.latestVersion;
+  const names = outdated.map((b) => `${displayName(b)} (${b.version})`).join(", ");
+  els.serverNote.textContent =
+    `browser-mcp server ${latest} is available. Outdated: ${names}. ` +
+    "Restart the agent if it runs npx -y tabmcp@latest, or run npm i -g tabmcp.";
+}
+
+function paintUpdate(u: UpdateStatus): void {
+  const offer = u.available;
+  els.update.hidden = !offer;
+  if (offer) {
+    els.updateText.textContent = u.installing
+      ? `Installing ${offer.version}…`
+      : `Version ${offer.version} is available (you have ${u.current})`;
+    els.updateText.title = offer.url;
+    els.btnUpdate.disabled = u.installing;
+    els.btnUpdateSkip.disabled = u.installing;
+  }
+  const note = u.error ?? u.warning;
+  els.updateNote.hidden = !note;
+  els.updateNoteText.textContent = note ?? "";
+
+  els.versionText.textContent =
+    u.channel === "release"
+      ? `Version ${u.current}`
+      : `Version ${u.current} (dev build, no update checks)`;
+  els.btnUpdateCheck.hidden = u.channel !== "release";
+}
+
+async function updateAction(type: string): Promise<void> {
+  const res = await send<{ ok: boolean; update?: UpdateStatus }>({ type });
+  if (res?.ok && res.update) paintUpdate(res.update);
+}
+
+els.btnUpdate.addEventListener("click", () => {
+  els.btnUpdate.disabled = true;
+  els.updateText.textContent = "Installing…";
+  void updateAction("update.install");
+});
+els.btnUpdateSkip.addEventListener("click", () => void updateAction("update.skip"));
+els.btnUpdateDismiss.addEventListener("click", () => void updateAction("update.dismiss"));
+els.btnUpdateCheck.addEventListener("click", () => {
+  els.btnUpdateCheck.textContent = "Checking…";
+  void updateAction("update.check").finally(() => {
+    els.btnUpdateCheck.textContent = "Check for updates";
+  });
+});
+
 void refresh();
 setInterval(() => void refresh(), 1500);
+void updateAction("update.status");
+setInterval(() => void updateAction("update.status"), 1500);
 void refreshBridges();
 setInterval(() => void refreshBridges(), 5000);

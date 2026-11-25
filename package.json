@@ -3,11 +3,12 @@
   "private": true,
   "version": "0.2.0",
   "description": "Chrome MV3 extension + MCP server for agent automation of a Connected tab",
+  "license": "MIT",
   "scripts": {
     "build": "pnpm -r run build",
-    "build:server": "pnpm --filter @browser-mcp/server build",
+    "build:server": "pnpm --filter tabmcp build",
     "build:extension": "pnpm --filter @browser-mcp/extension build",
-    "dev:server": "pnpm --filter @browser-mcp/server dev",
+    "dev:server": "pnpm --filter tabmcp dev",
     "typecheck": "pnpm -r run typecheck"
   },
   "engines": {

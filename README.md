@@ -4,45 +4,66 @@ Chrome Manifest V3 extension + TypeScript MCP server that lets an AI agent autom
 
 See [SPEC.md](./SPEC.md) for architecture, protocol, and tool catalog.
 
-## Download
+## Install
 
-A prebuilt extension zip (`browser-mcp-extension-*.zip`) is attached to each [release](https://github.com/Wadjinny/browser-mcp/releases/latest). Unzip it and load the folder with **Load unpacked** in `chrome://extensions`. You still need to build and run the MCP server from source (step 1 and 2 below).
+You need Node.js 20+ and Chrome.
 
-## Setup
+### 1. Add the MCP server to your agent
 
-### 1. Install and build
+The server is published on npm as [`tabmcp`](https://www.npmjs.com/package/tabmcp).
+
+Claude Code:
 
 ```bash
-pnpm install
-pnpm build
+claude mcp add browser-mcp -- npx -y tabmcp@latest
 ```
 
-### 2. Run the MCP server (Cursor)
-
-Add to your Cursor MCP config (absolute path required):
+Cursor and other clients (`mcpServers` JSON):
 
 ```json
 {
   "mcpServers": {
     "browser-mcp": {
-      "command": "pnpm",
-      "args": [
-        "--dir",
-        "/absolute/path/to/browser-mcp/server",
-        "exec",
-        "tsx",
-        "src/index.ts"
-      ],
+      "command": "npx",
+      "args": ["-y", "tabmcp@latest"],
       "env": {
-        "BROWSER_MCP_WS_PORT": "17373",
-        "BROWSER_MCP_NAME": "vidfast-dl"
+        "BROWSER_MCP_NAME": "my-project"
       }
     }
   }
 }
 ```
 
-Or after `pnpm build`:
+With `@latest`, every new agent session starts the newest published server, so the server updates itself on restart. If you prefer a fixed install, run `npm i -g tabmcp` and use `"command": "tabmcp"` instead. Then you update with the same command.
+
+### 2. Install the Chrome extension
+
+```bash
+npx -y tabmcp@latest install-extension   # latest release; or pass a tag, e.g. v0.3.0
+```
+
+This puts the extension in `~/.config/browser-mcp/extension` (override with `BROWSER_MCP_EXTENSION_DIR`). In `chrome://extensions`, enable **Developer mode**, click **Load unpacked** and pick that folder. Chrome will warn about the `debugger` permission. Access is limited to the tab you Connect and a local MCP server.
+
+The same zip is attached to each [GitHub release](https://github.com/Wadjinny/browser-mcp/releases/latest) if you prefer to unzip it yourself, but then the popup's **Update** button can't update it in place.
+
+### Updates
+
+**Extension:** release builds check GitHub for a newer release every few hours. When there is one, Chrome shows a notification and the popup shows a banner with **Update** and **Skip**. Nothing installs until you click **Update**. Then a running browser-mcp server downloads the release into the extension folder and the extension reloads itself. Settings in the popup shows the current version and has a **Check for updates** button.
+
+- Updates only take effect if Chrome loads the extension from the folder above. If you loaded it from somewhere else, the popup tells you where the update went.
+- A release that needs a newer server is refused with a message to update the server first.
+- Builds you make yourself (`extension/dist`) are dev builds and never check for updates.
+
+**Server:** the server checks npm every few hours. If a newer version exists, the popup says which sessions are outdated and how to update them, and the server logs it. With `npx -y tabmcp@latest`, restarting the agent is enough. Turn the check off with `BROWSER_MCP_UPDATE_CHECK=0`.
+
+## Running from source
+
+```bash
+pnpm install
+pnpm build
+```
+
+Point your MCP client at the built server:
 
 ```json
 {
@@ -52,12 +73,16 @@ Or after `pnpm build`:
       "args": ["/absolute/path/to/browser-mcp/server/dist/index.js"],
       "env": {
         "BROWSER_MCP_WS_PORT": "17373",
-        "BROWSER_MCP_NAME": "vidfast-dl"
+        "BROWSER_MCP_NAME": "my-project"
       }
     }
   }
 }
 ```
+
+Load `extension/dist` with **Load unpacked**. See [Development](#development) for watch mode.
+
+## Configuration
 
 The server listens on `ws://127.0.0.1:17373` only (never `0.0.0.0`). Each instance keeps its own handshake token (`~/.config/browser-mcp/token`, or `BROWSER_MCP_TOKEN` / `BROWSER_MCP_TOKEN_FILE`). The extension fetches **that instance’s** token from `http://127.0.0.1:<port>/handshake` — instances do not need to share a file.
 
@@ -79,6 +104,8 @@ All of this is optional to configure:
 | `BROWSER_MCP_CHROME_USER_DATA_DIR` | Chrome's default | `--user-data-dir`, for a separate profile. |
 | `BROWSER_MCP_CHROME_ARGS` | none | Extra flags, e.g. `--start-maximized`. |
 | `BROWSER_MCP_CHROME_EXTENSION` | none | Unpacked extension folder to force-load with `--load-extension` (Chromium / Chrome for Testing). |
+| `BROWSER_MCP_UPDATE_CHECK` | on | Set to `0`/`false`/`off` to stop the server checking npm for a newer version. |
+| `BROWSER_MCP_EXTENSION_DIR` | `~/.config/browser-mcp/extension` | Folder that `install-extension` and the popup's **Update** button install the extension into. |
 | `BROWSER_MCP_CHROME_CONNECT_TIMEOUT_MS` | `25000` | How long to wait for the extension after launching. |
 | `BROWSER_MCP_AUTO_ALLOW` | off | Set to `1`/`true`/`yes`/`on` so the extension auto-grants **this** instance's control-lease and `browser_connect_tab` requests instead of showing an Allow/Deny notification. For headless / unattended agent sessions where nobody can click the prompt. See the security note below. |
 
@@ -90,14 +117,9 @@ Set `BROWSER_MCP_AUTO_ALLOW=1` on an instance you trust to drive the browser una
 
 > Security: the flag is self-declared by the instance, so it is a convenience for *your own* trusted sessions on localhost — not a trust boundary against hostile local processes (which could already set it themselves). The real boundaries remain unchanged: the server binds `127.0.0.1` only, and every bridge still requires its per-port handshake token. Leave it off unless a human genuinely can't answer the prompt.
 
-### 3. Load the extension
+## Usage
 
-1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. **Load unpacked** → select `extension/dist`
-4. Chrome will warn about the `debugger` permission. Access is limited to the tab you Connect and a local MCP server.
-
-### 4. Connect a tab
+### Connect a tab
 
 Either:
 
@@ -137,7 +159,7 @@ The overlay sits in a closed shadow root outside `<body>`, so snapshots and find
 - `devtools_network_summary` collapses id-like path segments (numbers, UUIDs, long tokens) to `:id`, and returns 15 hosts / 15 paths by default.
 - `browser_screenshot` fails immediately with `TAB_NOT_VISIBLE` when the tab is in the background (Chrome can only capture the front tab).
 
-### 5. Secure input (passwords, OTPs, API keys)
+### Secure input (passwords, OTPs, API keys)
 
 Never paste a secret into chat or pass it as `browser_type.text`. Call `browser_type_secure` on the field instead:
 
@@ -156,7 +178,7 @@ Fields filled this way are marked and redacted (`value=<redacted>`) in later sna
 
 **Caveat:** this keeps the value out of the agent's context, not away from the page. The destination site receives it normally, and its scripts can mirror it into other fields. Check the destination host shown in the window before typing.
 
-### 6. Pin elements (optional)
+### Pin elements (optional)
 
 After Connect, use **Pick element** in the popup (or have the agent call `browser_pick_element`) to enter in-page pick mode. Hover highlights a target; click pins it as `pin_N`. Esc cancels. Pins accumulate until clear, navigation, or Disconnect. Interaction tools accept `pin` instead of a snapshot `ref`. The in-page pin panel has a copy button for `browser-mcp://tab/{tabId}/pin/{id}`.
 
@@ -173,7 +195,7 @@ Attach also binds related existing workers (`chrome.debugger.getTargets` + `atta
 ## Development
 
 ```bash
-pnpm --filter @browser-mcp/server dev          # MCP + WS bridge
+pnpm --filter tabmcp dev        # MCP + WS bridge
 pnpm --filter @browser-mcp/extension watch     # rebuild extension/dist
 ```
 
@@ -239,3 +261,16 @@ Reload the unpacked extension in Chrome after rebuilds.
 - Worker network capture is best-effort if Chrome omits a target from `getTargets`
 - `fullPage` screenshots are best-effort via CDP
 - Element pick is top-frame only (no iframe / open shadow-root piercing in v1)
+
+## Releasing
+
+Push a `v*` tag (e.g. `v0.3.0`). CI then:
+
+- builds the extension with the tag's version and attaches the zip to a GitHub release;
+- publishes the server to npm as `tabmcp` with the same version, using [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers). No npm token is stored anywhere. npm checks that the publish comes from this repo's `release.yml` workflow.
+
+One-time setup on npmjs.com: in the `tabmcp` package settings, add a trusted publisher of type GitHub Actions with owner `Wadjinny`, repository `browser-mcp` and workflow file `release.yml`. npm only lets you configure this on a package that exists, so publish the first version by hand (`npm login`, then `cd server && pnpm publish --access public`).
+
+## License
+
+[MIT](./LICENSE)

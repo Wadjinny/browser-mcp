@@ -1,13 +1,27 @@
 import * as esbuild from "esbuild";
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
+import { PROTOCOL_VERSION, versionFromTag } from "../../shared/src/protocol.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 const dist = join(root, "dist");
 const watch = process.argv.includes("--watch");
+
+/**
+ * CI sets BROWSER_MCP_VERSION to the release tag (v1.2.3). That build is the
+ * "release" channel: its manifest carries the tag's version and its popup
+ * offers newer GitHub releases. Local builds are "dev" and never do.
+ */
+const releaseTag = process.env.BROWSER_MCP_VERSION?.trim() || null;
+const releaseVersion = releaseTag ? versionFromTag(releaseTag) : null;
+if (releaseTag && !releaseVersion) {
+  throw new Error(`BROWSER_MCP_VERSION=${releaseTag} is not a Chrome version (expected v1.2.3).`);
+}
+const channel = releaseVersion ? "release" : "dev";
+const define = { __BROWSER_MCP_CHANNEL__: JSON.stringify(channel) };
 
 function crc32(buf: Buffer): number {
   let c = ~0;
@@ -89,6 +103,7 @@ async function buildOnce(): Promise<void> {
     sourcemap: true,
     logLevel: "info" as const,
     alias: sharedAlias,
+    define,
   };
 
   // SW + popup are ES modules; content scripts injected via
@@ -113,7 +128,13 @@ async function buildOnce(): Promise<void> {
     format: "iife",
   });
 
-  cpSync(join(root, "manifest.json"), join(dist, "manifest.json"));
+  const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
+  if (releaseVersion) manifest.version = releaseVersion;
+  writeFileSync(join(dist, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  writeFileSync(
+    join(dist, "build-info.json"),
+    `${JSON.stringify({ version: manifest.version, channel, protocolVersion: PROTOCOL_VERSION }, null, 2)}\n`,
+  );
   cpSync(join(root, "popup/popup.html"), join(dist, "popup/popup.html"));
   cpSync(join(root, "popup/popup.css"), join(dist, "popup/popup.css"));
   cpSync(join(root, "secure/secure.html"), join(dist, "secure/secure.html"));
@@ -147,6 +168,7 @@ if (watch) {
     target: "chrome114",
     sourcemap: true,
     alias,
+    define,
   });
   const iifeCtx = await esbuild.context({
     entryPoints: {
@@ -159,6 +181,7 @@ if (watch) {
     target: "chrome114",
     sourcemap: true,
     alias,
+    define,
   });
   await Promise.all([modCtx.watch(), iifeCtx.watch()]);
 }

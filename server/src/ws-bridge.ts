@@ -20,8 +20,12 @@ import {
   type EventMessage,
   type RequestMessage,
   type ResponseMessage,
+  type UpdateRequest,
+  type UpdateResponse,
   type WelcomeMessage,
 } from "@browser-mcp/shared";
+import { installExtensionRelease } from "./extension-install.js";
+import { SERVER_VERSION, latestServerVersion } from "./version.js";
 import {
   applyExtensionState,
   getBridgeState,
@@ -154,6 +158,8 @@ export class WsBridge {
       preferredPort: this.preferredPort,
       name: parseInstanceName(process.env.BROWSER_MCP_NAME),
       autoAllow: parseAutoAllow(process.env.BROWSER_MCP_AUTO_ALLOW),
+      version: SERVER_VERSION,
+      latestVersion: latestServerVersion(),
     };
   }
 
@@ -507,6 +513,13 @@ export class WsBridge {
       return;
     }
 
+    // The user clicked Update in the extension: install that release into the
+    // extension folder. Token-gated like /control.
+    if (req.url === "/update" && req.method === "POST") {
+      void this.handleUpdate(req, res);
+      return;
+    }
+
     if (req.url === "/handshake") {
       res.writeHead(200, {
         "Content-Type": "application/json",
@@ -524,6 +537,52 @@ export class WsBridge {
 
     res.writeHead(404);
     res.end("Not found");
+  }
+
+  private async handleUpdate(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const reply = (status: number, body: UpdateResponse): void => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(body));
+    };
+    let parsed: Partial<UpdateRequest>;
+    try {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const chunk of req) {
+        size += (chunk as Buffer).length;
+        if (size > 4096) {
+          reply(413, { ok: false, error: "Body too large" });
+          return;
+        }
+        chunks.push(chunk as Buffer);
+      }
+      parsed = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+    } catch {
+      reply(400, { ok: false, error: "Invalid JSON body." });
+      return;
+    }
+    if (parsed.token !== this.token) {
+      reply(403, { ok: false, error: "Handshake token mismatch." });
+      return;
+    }
+    if (typeof parsed.tag !== "string") {
+      reply(400, { ok: false, error: "tag is required." });
+      return;
+    }
+    try {
+      const result = await installExtensionRelease(parsed.tag);
+      console.error(
+        `[browser-mcp] Installed extension ${result.version} into ${result.dir}.`,
+      );
+      reply(200, { ok: true, ...result });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      console.error(`[browser-mcp] Extension update failed: ${error}`);
+      reply(500, { ok: false, error });
+    }
   }
 
   private async handleControl(
@@ -628,6 +687,12 @@ export class WsBridge {
     }
 
     if (msg.type === "hello") {
+      if (msg.protocolVersion !== PROTOCOL_VERSION) {
+        console.error(
+          `[browser-mcp] Extension speaks protocol v${msg.protocolVersion}, this server v${PROTOCOL_VERSION}. ` +
+            "Update whichever side is older.",
+        );
+      }
       if (msg.token && msg.token !== this.token) {
         ws.send(
           JSON.stringify({

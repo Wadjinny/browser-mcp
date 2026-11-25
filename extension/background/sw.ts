@@ -95,6 +95,16 @@ import {
   handleSecureInputMessage,
   withSecureInput,
 } from "./secure-input.js";
+import {
+  UPDATE_ALARM,
+  checkForUpdates,
+  dismissUpdateMessages,
+  initUpdateListeners,
+  installUpdate,
+  skipUpdate,
+  updateStatus,
+  verifyAppliedUpdate,
+} from "./updates.js";
 
 /** RPCs that don't act on the page, so they shouldn't pulse the indicator. */
 const QUIET_METHODS = new Set([
@@ -1852,6 +1862,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
 
+      if (typeof msg.type === "string" && msg.type.startsWith("update.")) {
+        const status =
+          msg.type === "update.check"
+            ? await checkForUpdates(true)
+            : msg.type === "update.install"
+              ? await installUpdate()
+              : msg.type === "update.skip"
+                ? await skipUpdate()
+                : msg.type === "update.dismiss"
+                  ? await dismissUpdateMessages()
+                  : await updateStatus();
+        sendResponse({ ok: true, update: status });
+        return;
+      }
+
       if (msg.type === "picker.picked") {
         if (senderTabId == null) throw new Error("picker message without tab");
         const payload = msg.pin as PickPayload;
@@ -2025,6 +2050,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "keepalive") {
     void startHub().then(() => sweepOrphanTabs());
+  } else if (alarm.name === UPDATE_ALARM) {
+    void checkForUpdates();
   }
 });
 
@@ -2040,6 +2067,9 @@ chrome.runtime.onStartup.addListener(() => {
 
 void chrome.alarms.create("keepalive", { periodInMinutes: 0.5 });
 void startHub();
+initUpdateListeners();
+void chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: 60 });
+void verifyAppliedUpdate().then(() => checkForUpdates());
 void (async () => {
   // SW restarts lose in-memory indicator state; restore it for owned tabs.
   await chrome.action.setBadgeText({ text: "" }).catch(() => undefined);

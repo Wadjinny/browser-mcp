@@ -1,26 +1,60 @@
 {
-  "name": "@browser-mcp/server",
-  "version": "0.2.0",
-  "private": true,
+  "name": "tabmcp",
+  "version": "0.2.1",
+  "description": "MCP server that lets AI agents drive and inspect your real Chrome through the browser-mcp extension.",
+  "license": "MIT",
   "type": "module",
   "bin": {
+    "tabmcp": "./dist/index.js",
     "browser-mcp": "./dist/index.js"
   },
+  "files": [
+    "dist/index.js",
+    "dist/index.js.map",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chrome",
+    "browser",
+    "automation",
+    "devtools",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wadjinny/browser-mcp.git",
+    "directory": "server"
+  },
+  "homepage": "https://github.com/Wadjinny/browser-mcp#readme",
+  "bugs": "https://github.com/Wadjinny/browser-mcp/issues",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/build.mjs",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm --filter @browser-mcp/shared build && pnpm typecheck && pnpm build",
+    "prepack": "cp ../LICENSE ../README.md .",
+    "postpack": "rm -f LICENSE README.md"
   },
   "dependencies": {
-    "@browser-mcp/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "ws": "^8.18.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@browser-mcp/shared": "workspace:*",
     "@types/node": "^24.3.0",
     "@types/ws": "^8.18.1",
+    "esbuild": "0.25.9",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }

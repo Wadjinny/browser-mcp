@@ -38,6 +38,8 @@ export type DiscoveredBridge = {
   preferredPort: number;
   name: string | null;
   autoAllow: boolean;
+  version: string | null;
+  latestVersion: string | null;
   extensionConnected: boolean;
   controlling: boolean;
 };
@@ -450,6 +452,8 @@ async function probeBridgePort(port: number): Promise<DiscoveredBridge | null> {
       preferredPort: health.identity.preferredPort,
       name: health.identity.name ?? null,
       autoAllow: health.identity.autoAllow === true,
+      version: health.identity.version ?? null,
+      latestVersion: health.identity.latestVersion ?? null,
       extensionConnected: false,
       controlling: false,
     };

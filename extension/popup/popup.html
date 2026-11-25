@@ -9,6 +9,17 @@
   <body>
     <div id="pending" class="strip pending" hidden></div>
 
+    <div id="update" class="strip update" hidden>
+      <span id="update-text" class="strip-text ell"></span>
+      <button id="btn-update-skip" class="text-btn" type="button">Skip</button>
+      <button id="btn-update" class="btn dark" type="button">Update</button>
+    </div>
+    <div id="server-note" class="update-note" hidden></div>
+    <div id="update-note" class="update-note" hidden>
+      <span id="update-note-text"></span>
+      <button id="btn-update-dismiss" class="text-btn" type="button">Dismiss</button>
+    </div>
+
     <div id="owner-strip" class="strip" hidden>
       <span id="owner-dot" class="dot" aria-hidden="true"></span>
       <span id="owner-text" class="strip-text ell"></span>
@@ -47,6 +58,10 @@
         <button id="btn-reconnect" class="btn" type="button">Reconnect</button>
         <button id="btn-refresh" class="btn" type="button">Refresh</button>
       </label>
+      <div class="version-row">
+        <span id="version-text"></span>
+        <button id="btn-update-check" class="text-btn" type="button" hidden>Check for updates</button>
+      </div>
       <p class="hint">
         Access is limited to the Connected tab and a local MCP server on
         127.0.0.1. The debugger permission is required for DevTools-depth tools.

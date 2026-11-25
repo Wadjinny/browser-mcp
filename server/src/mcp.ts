@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { SERVER_VERSION } from "./version.js";
 import {
   assertCdpAllowed,
   callExt,
@@ -63,7 +64,7 @@ export function createMcpServer(): McpServer {
     {
       name: "browser-mcp",
       title: "browser-mcp",
-      version: "0.1.0",
+      version: SERVER_VERSION,
     },
     { instructions: SERVER_INSTRUCTIONS },
   );

@@ -1,4 +1,4 @@
-name: Build extension
+name: Build and release
 
 on:
   push:
@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # npm Trusted Publishing (OIDC)
 
 jobs:
   build:
@@ -33,11 +34,20 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Set server version from tag
+        if: env.TAG != ''
+        run: pnpm --filter tabmcp exec npm pkg set "version=${TAG#v}"
+
       - name: Build
+        # A tag build is the "release" channel: its manifest version comes from
+        # the tag, and its popup offers newer releases. Other builds are "dev".
+        env:
+          BROWSER_MCP_VERSION: ${{ env.TAG }}
         run: pnpm build
 
       - name: Zip extension
@@ -63,3 +73,19 @@ jobs:
           else
             gh release create "$TAG" out/*.zip -R "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
           fi
+
+      # npm Trusted Publishing: npm checks this workflow's GitHub OIDC identity
+      # against the trusted publisher configured on npmjs.com for "tabmcp". No
+      # token or secret is involved, and provenance is attached automatically.
+      - name: Publish server to npm
+        if: env.TAG != ''
+        run: |
+          VERSION="${TAG#v}"
+          if npm view "tabmcp@$VERSION" version >/dev/null 2>&1; then
+            echo "tabmcp@$VERSION is already on npm."
+            exit 0
+          fi
+          npm install -g npm@^11.5.1   # Trusted Publishing needs npm 11.5.1+
+          # pnpm pack rewrites workspace: ranges; npm publish does the OIDC exchange.
+          (cd server && pnpm pack --pack-destination "$RUNNER_TEMP")
+          npm publish "$RUNNER_TEMP/tabmcp-$VERSION.tgz" --access public

@@ -220,6 +220,12 @@ server/
 
 Other events (buffered for tools): `console.message`, `network.request`, `network.response`, `debugger.detached`, `control.changed`.
 
+#### Extension updates (HTTP, extension → server)
+
+Release builds (CI builds of a `v*` tag, `build-info.json` channel `release`) poll the GitHub releases API every 6 h. When a newer version exists the extension shows a notification and a popup banner; the user chooses **Update** or **Skip**. Nothing is installed automatically.
+
+On **Update** the extension sends `POST /update` `{ token, tag }` to a connected server. The server downloads that release's zip, refuses it if its `build-info.json` `protocolVersion` differs from the server's, extracts it into `BROWSER_MCP_EXTENSION_DIR` (default `~/.config/browser-mcp/extension`) and replies `{ ok, version, dir }` or `{ ok: false, error }`. Then the extension calls `chrome.runtime.reload()`. After the restart, if its version is still older, the extension is loaded from another folder, and the popup says where the update went. `browser-mcp install-extension [tag]` does the same install from the command line.
+
 #### Method catalog (extension RPC)
 
 | Method | Side | Description |

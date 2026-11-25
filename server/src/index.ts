@@ -8,6 +8,8 @@ import {
   writePortFile,
 } from "./token.js";
 import { setBridge, WsBridge } from "./ws-bridge.js";
+import { installExtensionRelease } from "./extension-install.js";
+import { SERVER_VERSION, checkServerUpdate } from "./version.js";
 
 /** How often to retry binding when the whole discovery band was busy. */
 const RETRY_BIND_MS = 15_000;
@@ -73,6 +75,10 @@ async function main(): Promise<void> {
     retryTimer.unref();
   }
 
+  void checkServerUpdate();
+  const updateTimer = setInterval(() => void checkServerUpdate(), 6 * 60 * 60_000);
+  updateTimer.unref();
+
   const mcp = createMcpServer();
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
@@ -119,7 +125,26 @@ async function main(): Promise<void> {
   process.on("disconnect", () => void shutdown("parent disconnected"));
 }
 
-main().catch((err) => {
-  console.error("[browser-mcp] Fatal:", err);
-  process.exit(1);
-});
+/** `browser-mcp install-extension [tag]`: put a release where Chrome can load it. */
+async function installExtensionCli(tag: string | null): Promise<void> {
+  const { version, dir } = await installExtensionRelease(tag);
+  console.log(`Installed browser-mcp extension ${version} into ${dir}`);
+  console.log(
+    "First time? In chrome://extensions enable Developer mode, click Load unpacked and pick that folder. " +
+      "Later updates are offered in the extension popup and installed into the same folder.",
+  );
+}
+
+if (process.argv[2] === "--version" || process.argv[2] === "-v") {
+  console.log(SERVER_VERSION);
+} else if (process.argv[2] === "install-extension") {
+  installExtensionCli(process.argv[3] ?? null).catch((err) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+} else {
+  main().catch((err) => {
+    console.error("[browser-mcp] Fatal:", err);
+    process.exit(1);
+  });
+}
