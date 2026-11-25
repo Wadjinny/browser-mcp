@@ -3,7 +3,7 @@ import {
   ERROR_MESSAGES,
   isCdpMethodAllowed,
   type ErrorCode,
-} from "@dev-tool-mcp/shared";
+} from "@browser-mcp/shared";
 import { getBridge } from "../ws-bridge.js";
 
 export type ToolResult = {

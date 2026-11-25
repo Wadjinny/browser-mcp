@@ -9,7 +9,7 @@ import {
   type BridgeState,
   type NetworkListFilter,
   type RequestMessage,
-} from "@dev-tool-mcp/shared";
+} from "@browser-mcp/shared";
 import {
   attachDebugger,
   clearConsole,
@@ -326,7 +326,7 @@ async function ensureContentScript(tabId: number): Promise<void> {
       const ping = (await chrome.tabs.sendMessage(
         tabId,
         {
-          channel: "dev-tool-mcp",
+          channel: "browser-mcp",
           action: "ping",
           params: {},
         },
@@ -519,7 +519,7 @@ async function pageAction(
 ): Promise<unknown> {
   await ensureContentScript(tabId);
   const message = {
-    channel: "dev-tool-mcp",
+    channel: "browser-mcp",
     action,
     params,
   };
@@ -892,7 +892,7 @@ async function connectExistingTab(
       // keep raw
     }
     const answer = await askUserConsent(
-      "dev-tool-mcp: connect a tab",
+      "browser-mcp: connect a tab",
       `${labelForPort(port)} wants to control "${tab.title ?? "tab"}" (${origin}).` +
         (current ? `\nCurrently controlled by ${labelForPort(current.port)}.` : ""),
     );
@@ -1372,7 +1372,7 @@ async function route(
             "Page.createIsolatedWorld",
             {
               frameId: cdpFrameId,
-              worldName: "dev-tool-mcp-eval",
+              worldName: "browser-mcp-eval",
               grantUniveralAccess: true,
             },
           )) as { executionContextId: number };

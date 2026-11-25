@@ -13,7 +13,7 @@ import {
   ErrorCodes,
   SECURE_INPUT_TIMEOUT_MS,
   bridgeError,
-} from "@dev-tool-mcp/shared";
+} from "@browser-mcp/shared";
 
 export type SecureInputKind = "password" | "text" | "otp";
 

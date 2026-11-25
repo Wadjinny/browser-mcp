@@ -5,8 +5,8 @@ import { dirname, join } from "node:path";
 
 function tokenPath(): string {
   return (
-    process.env.DEV_TOOL_MCP_TOKEN_FILE ??
-    join(homedir(), ".config", "dev-tool-mcp", "token")
+    process.env.BROWSER_MCP_TOKEN_FILE ??
+    join(homedir(), ".config", "browser-mcp", "token")
   );
 }
 
@@ -46,8 +46,8 @@ export async function clearPortFile(port: number): Promise<void> {
 }
 
 export async function loadOrCreateToken(): Promise<string> {
-  if (process.env.DEV_TOOL_MCP_TOKEN) {
-    return process.env.DEV_TOOL_MCP_TOKEN;
+  if (process.env.BROWSER_MCP_TOKEN) {
+    return process.env.BROWSER_MCP_TOKEN;
   }
 
   const path = tokenPath();

@@ -1,4 +1,4 @@
-# dev-tool-mcp
+# browser-mcp
 
 Chrome Manifest V3 extension + TypeScript MCP server that lets an AI agent automate and inspect your **real Chrome profile**, gated by an explicit per-tab **Connect** control. Hybrid page automation (content scripts) plus DevTools depth via `chrome.debugger` (CDP).
 
@@ -6,7 +6,7 @@ See [SPEC.md](./SPEC.md) for architecture, protocol, and tool catalog.
 
 ## Download
 
-A prebuilt extension zip (`dev-tool-mcp-extension-*.zip`) is attached to each [release](https://github.com/Wadjinny/dev-tool-mcp/releases/latest). Unzip it and load the folder with **Load unpacked** in `chrome://extensions`. You still need to build and run the MCP server from source (step 1 and 2 below).
+A prebuilt extension zip (`browser-mcp-extension-*.zip`) is attached to each [release](https://github.com/Wadjinny/browser-mcp/releases/latest). Unzip it and load the folder with **Load unpacked** in `chrome://extensions`. You still need to build and run the MCP server from source (step 1 and 2 below).
 
 ## Setup
 
@@ -24,18 +24,18 @@ Add to your Cursor MCP config (absolute path required):
 ```json
 {
   "mcpServers": {
-    "dev-tool-mcp": {
+    "browser-mcp": {
       "command": "pnpm",
       "args": [
         "--dir",
-        "/absolute/path/to/dev-tool-mcp/server",
+        "/absolute/path/to/browser-mcp/server",
         "exec",
         "tsx",
         "src/index.ts"
       ],
       "env": {
-        "DEV_TOOL_MCP_WS_PORT": "17373",
-        "DEV_TOOL_MCP_NAME": "vidfast-dl"
+        "BROWSER_MCP_WS_PORT": "17373",
+        "BROWSER_MCP_NAME": "vidfast-dl"
       }
     }
   }
@@ -47,21 +47,21 @@ Or after `pnpm build`:
 ```json
 {
   "mcpServers": {
-    "dev-tool-mcp": {
+    "browser-mcp": {
       "command": "node",
-      "args": ["/absolute/path/to/dev-tool-mcp/server/dist/index.js"],
+      "args": ["/absolute/path/to/browser-mcp/server/dist/index.js"],
       "env": {
-        "DEV_TOOL_MCP_WS_PORT": "17373",
-        "DEV_TOOL_MCP_NAME": "vidfast-dl"
+        "BROWSER_MCP_WS_PORT": "17373",
+        "BROWSER_MCP_NAME": "vidfast-dl"
       }
     }
   }
 }
 ```
 
-The server listens on `ws://127.0.0.1:17373` only (never `0.0.0.0`). Each instance keeps its own handshake token (`~/.config/dev-tool-mcp/token`, or `DEV_TOOL_MCP_TOKEN` / `DEV_TOOL_MCP_TOKEN_FILE`). The extension fetches **that instance’s** token from `http://127.0.0.1:<port>/handshake` — instances do not need to share a file.
+The server listens on `ws://127.0.0.1:17373` only (never `0.0.0.0`). Each instance keeps its own handshake token (`~/.config/browser-mcp/token`, or `BROWSER_MCP_TOKEN` / `BROWSER_MCP_TOKEN_FILE`). The extension fetches **that instance’s** token from `http://127.0.0.1:<port>/handshake` — instances do not need to share a file.
 
-Optional `DEV_TOOL_MCP_NAME` is the label shown in the popup and in control-request notifications (falls back to the project folder name). Always combined with `:port`.
+Optional `BROWSER_MCP_NAME` is the label shown in the popup and in control-request notifications (falls back to the project folder name). Always combined with `:port`.
 
 Up to **20** instances can bind in the discovery band `17373–17392`. The extension opens a WebSocket to each and keeps them all connected.
 
@@ -73,20 +73,20 @@ All of this is optional to configure:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `DEV_TOOL_MCP_LAUNCH_CHROME` | on | Set to `0`/`false`/`off` to never launch Chrome automatically. |
-| `DEV_TOOL_MCP_CHROME_BIN` | auto-detected | Browser executable, e.g. `/usr/bin/google-chrome`. |
-| `DEV_TOOL_MCP_CHROME_PROFILE` | Chrome's default | `--profile-directory` value, e.g. `Default` or `Profile 1`. |
-| `DEV_TOOL_MCP_CHROME_USER_DATA_DIR` | Chrome's default | `--user-data-dir`, for a separate profile. |
-| `DEV_TOOL_MCP_CHROME_ARGS` | none | Extra flags, e.g. `--start-maximized`. |
-| `DEV_TOOL_MCP_CHROME_EXTENSION` | none | Unpacked extension folder to force-load with `--load-extension` (Chromium / Chrome for Testing). |
-| `DEV_TOOL_MCP_CHROME_CONNECT_TIMEOUT_MS` | `25000` | How long to wait for the extension after launching. |
-| `DEV_TOOL_MCP_AUTO_ALLOW` | off | Set to `1`/`true`/`yes`/`on` so the extension auto-grants **this** instance's control-lease and `browser_connect_tab` requests instead of showing an Allow/Deny notification. For headless / unattended agent sessions where nobody can click the prompt. See the security note below. |
+| `BROWSER_MCP_LAUNCH_CHROME` | on | Set to `0`/`false`/`off` to never launch Chrome automatically. |
+| `BROWSER_MCP_CHROME_BIN` | auto-detected | Browser executable, e.g. `/usr/bin/google-chrome`. |
+| `BROWSER_MCP_CHROME_PROFILE` | Chrome's default | `--profile-directory` value, e.g. `Default` or `Profile 1`. |
+| `BROWSER_MCP_CHROME_USER_DATA_DIR` | Chrome's default | `--user-data-dir`, for a separate profile. |
+| `BROWSER_MCP_CHROME_ARGS` | none | Extra flags, e.g. `--start-maximized`. |
+| `BROWSER_MCP_CHROME_EXTENSION` | none | Unpacked extension folder to force-load with `--load-extension` (Chromium / Chrome for Testing). |
+| `BROWSER_MCP_CHROME_CONNECT_TIMEOUT_MS` | `25000` | How long to wait for the extension after launching. |
+| `BROWSER_MCP_AUTO_ALLOW` | off | Set to `1`/`true`/`yes`/`on` so the extension auto-grants **this** instance's control-lease and `browser_connect_tab` requests instead of showing an Allow/Deny notification. For headless / unattended agent sessions where nobody can click the prompt. See the security note below. |
 
 ### Auto-allow (unattended sessions)
 
 The Connect gate normally asks you to Allow/Deny when an instance tries to take control of the browser or steal a tab from another session. In a headless session (no display, or you're driving Claude remotely) there is nobody to click that prompt, so the request times out.
 
-Set `DEV_TOOL_MCP_AUTO_ALLOW=1` on an instance you trust to drive the browser unattended. That instance advertises an `autoAllow` flag over its local `/health`, and the extension grants its control-lease and connect-tab requests **without** a prompt. It is **opt-in and per-instance** (default off): every other instance still shows the Allow/Deny notification, so you are only waiving the prompt for the specific sessions you launch with this flag.
+Set `BROWSER_MCP_AUTO_ALLOW=1` on an instance you trust to drive the browser unattended. That instance advertises an `autoAllow` flag over its local `/health`, and the extension grants its control-lease and connect-tab requests **without** a prompt. It is **opt-in and per-instance** (default off): every other instance still shows the Allow/Deny notification, so you are only waiving the prompt for the specific sessions you launch with this flag.
 
 > Security: the flag is self-declared by the instance, so it is a convenience for *your own* trusted sessions on localhost — not a trust boundary against hostile local processes (which could already set it themselves). The real boundaries remain unchanged: the server binds `127.0.0.1` only, and every bridge still requires its per-port handshake token. Leave it off unless a human genuinely can't answer the prompt.
 
@@ -101,7 +101,7 @@ Set `DEV_TOOL_MCP_AUTO_ALLOW=1` on an instance you trust to drive the browser un
 
 Either:
 
-- Open the site in Chrome, click the **dev-tool-mcp** icon, then **Connect this tab**, or
+- Open the site in Chrome, click the **browser-mcp** icon, then **Connect this tab**, or
 - Ask the agent to `browser_open` / `browser_navigate` a URL (creates a tab and Connects it), or
 - Ask the agent to `browser_connect_tab` an existing tab (id from `browser_tabs` with `includeOthers`); you Allow it in a Chrome notification
 
@@ -158,7 +158,7 @@ Fields filled this way are marked and redacted (`value=<redacted>`) in later sna
 
 ### 6. Pin elements (optional)
 
-After Connect, use **Pick element** in the popup (or have the agent call `browser_pick_element`) to enter in-page pick mode. Hover highlights a target; click pins it as `pin_N`. Esc cancels. Pins accumulate until clear, navigation, or Disconnect. Interaction tools accept `pin` instead of a snapshot `ref`. The in-page pin panel has a copy button for `dev-tool-mcp://tab/{tabId}/pin/{id}`.
+After Connect, use **Pick element** in the popup (or have the agent call `browser_pick_element`) to enter in-page pick mode. Hover highlights a target; click pins it as `pin_N`. Esc cancels. Pins accumulate until clear, navigation, or Disconnect. Interaction tools accept `pin` instead of a snapshot `ref`. The in-page pin panel has a copy button for `browser-mcp://tab/{tabId}/pin/{id}`.
 
 ## Tools (summary)
 
@@ -173,8 +173,8 @@ Attach also binds related existing workers (`chrome.debugger.getTargets` + `atta
 ## Development
 
 ```bash
-pnpm --filter @dev-tool-mcp/server dev          # MCP + WS bridge
-pnpm --filter @dev-tool-mcp/extension watch     # rebuild extension/dist
+pnpm --filter @browser-mcp/server dev          # MCP + WS bridge
+pnpm --filter @browser-mcp/extension watch     # rebuild extension/dist
 ```
 
 Reload the unpacked extension in Chrome after rebuilds.
@@ -230,7 +230,7 @@ Reload the unpacked extension in Chrome after rebuilds.
 - [ ] `browser_click` on a link/submit returns `navigated: true` with the new URL
 - [ ] `browser_open` with `recordNetwork: true` lists the document request and its subresources
 - [ ] `devtools_network_summary` groups `/item/123` and `/item/456` as `/item/:id`
-- [ ] `DEV_TOOL_MCP_NAME` appears as `name :port` in the popup and notification
+- [ ] `BROWSER_MCP_NAME` appears as `name :port` in the popup and notification
 
 ## Limitations
 

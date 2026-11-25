@@ -7,7 +7,7 @@ import {
   type NetworkInitiator,
   type NetworkListFilter,
   type WebSocketMessageEntry,
-} from "@dev-tool-mcp/shared";
+} from "@browser-mcp/shared";
 
 const DEBUGGER_VERSION = "1.3";
 const RING = 1000;

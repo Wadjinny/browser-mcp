@@ -44,12 +44,12 @@ jobs:
         run: |
           VERSION="${TAG:-$(git rev-parse --short HEAD)}"
           mkdir -p out
-          (cd extension/dist && zip -qr "$GITHUB_WORKSPACE/out/dev-tool-mcp-extension-${VERSION}.zip" .)
+          (cd extension/dist && zip -qr "$GITHUB_WORKSPACE/out/browser-mcp-extension-${VERSION}.zip" .)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dev-tool-mcp-extension
+          name: browser-mcp-extension
           path: extension/dist
           if-no-files-found: error
 

@@ -20,7 +20,7 @@ export function discoveryPorts(preferred?: number): number[] {
   return [preferred, ...band.filter((p) => p !== preferred)];
 }
 
-/** Max length of `DEV_TOOL_MCP_NAME` after trim. */
+/** Max length of `BROWSER_MCP_NAME` after trim. */
 export const INSTANCE_NAME_MAX_LEN = 40;
 
 /** How long the extension waits for Allow/Deny on a control steal. */
@@ -59,10 +59,10 @@ export type BridgeIdentity = {
   startedAt: number;
   port: number;
   preferredPort: number;
-  /** From `DEV_TOOL_MCP_NAME`; display-only, not a unique key. */
+  /** From `BROWSER_MCP_NAME`; display-only, not a unique key. */
   name: string | null;
   /**
-   * From `DEV_TOOL_MCP_AUTO_ALLOW`. When true, the extension auto-grants this
+   * From `BROWSER_MCP_AUTO_ALLOW`. When true, the extension auto-grants this
    * instance's control-lease and connect-tab requests instead of prompting the
    * user with an Allow/Deny notification. Opt-in, per-instance, default false:
    * only set it on instances you trust to drive the browser unattended (e.g. a
@@ -131,9 +131,9 @@ export type PinDescriptor = {
   createdAt: number;
 };
 
-/** Copyable URI for a pin: `dev-tool-mcp://tab/{tabId}/pin/{id}`. */
+/** Copyable URI for a pin: `browser-mcp://tab/{tabId}/pin/{id}`. */
 export function pinToUri(pin: Pick<PinDescriptor, "id" | "tabId">): string {
-  return `dev-tool-mcp://tab/${pin.tabId}/pin/${encodeURIComponent(pin.id)}`;
+  return `browser-mcp://tab/${pin.tabId}/pin/${encodeURIComponent(pin.id)}`;
 }
 
 export type BridgeState = {

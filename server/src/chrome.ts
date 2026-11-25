@@ -9,15 +9,15 @@ export type BrowserLaunchResult = {
   error?: string;
 };
 
-/** Set `DEV_TOOL_MCP_LAUNCH_CHROME=0` to stop the server opening Chrome. */
+/** Set `BROWSER_MCP_LAUNCH_CHROME=0` to stop the server opening Chrome. */
 export function chromeLaunchDisabled(): boolean {
-  const raw = process.env.DEV_TOOL_MCP_LAUNCH_CHROME?.trim().toLowerCase();
+  const raw = process.env.BROWSER_MCP_LAUNCH_CHROME?.trim().toLowerCase();
   return raw === "0" || raw === "false" || raw === "off" || raw === "no";
 }
 
 /** The browser executable the user pinned, if any. */
 export function configuredBrowserBin(): string | null {
-  return process.env.DEV_TOOL_MCP_CHROME_BIN?.trim() || null;
+  return process.env.BROWSER_MCP_CHROME_BIN?.trim() || null;
 }
 
 type BrowserFamily = "chrome" | "chromium" | "brave" | "edge" | "vivaldi";
@@ -95,15 +95,15 @@ export async function isBrowserRunning(bin?: string | null): Promise<boolean> {
 function launchArgs(): string[] {
   const args = ["--no-first-run", "--no-default-browser-check"];
 
-  const profile = process.env.DEV_TOOL_MCP_CHROME_PROFILE?.trim();
+  const profile = process.env.BROWSER_MCP_CHROME_PROFILE?.trim();
   if (profile) args.push(`--profile-directory=${profile}`);
 
-  const userDataDir = process.env.DEV_TOOL_MCP_CHROME_USER_DATA_DIR?.trim();
+  const userDataDir = process.env.BROWSER_MCP_CHROME_USER_DATA_DIR?.trim();
   if (userDataDir) args.push(`--user-data-dir=${userDataDir}`);
 
   // Optional: force-load this build of the unpacked extension (Chromium and
   // Chrome for Testing honour it; branded Chrome may ignore it).
-  const extension = process.env.DEV_TOOL_MCP_CHROME_EXTENSION?.trim();
+  const extension = process.env.BROWSER_MCP_CHROME_EXTENSION?.trim();
   if (extension) {
     args.push(
       `--load-extension=${extension}`,
@@ -111,8 +111,8 @@ function launchArgs(): string[] {
     );
   }
 
-  // Extra flags, e.g. DEV_TOOL_MCP_CHROME_ARGS="--start-maximized".
-  const extra = process.env.DEV_TOOL_MCP_CHROME_ARGS?.trim();
+  // Extra flags, e.g. BROWSER_MCP_CHROME_ARGS="--start-maximized".
+  const extra = process.env.BROWSER_MCP_CHROME_ARGS?.trim();
   if (extra) args.push(...extra.split(/\s+/).filter(Boolean));
 
   return args;

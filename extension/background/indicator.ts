@@ -7,7 +7,7 @@
  *  - the toolbar badge shows ON (in the session colour) only on that tab
  */
 
-import { sessionColor } from "@dev-tool-mcp/shared";
+import { sessionColor } from "@browser-mcp/shared";
 
 type GroupColor = `${chrome.tabGroups.Color}`;
 const SESSION_GROUPS_KEY = "indicatorGroupsByPort";
@@ -31,7 +31,7 @@ export function setIndicatorLabelProvider(
 }
 
 function agentLabel(port: number): string {
-  return labelProvider(port) ?? `dev-tool-mcp :${port}`;
+  return labelProvider(port) ?? `browser-mcp :${port}`;
 }
 
 /** Stable colour per port (ports live in a small discovery band). */
@@ -215,7 +215,7 @@ function overlayInPage(
   label: string,
   color: string,
 ): void | Promise<void> {
-  const ID = "__dev_tool_mcp_indicator__";
+  const ID = "__browser_mcp_indicator__";
   let host = document.getElementById(ID) as
     | (HTMLElement & { __root?: ShadowRoot })
     | null;

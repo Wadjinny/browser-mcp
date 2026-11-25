@@ -1,4 +1,4 @@
-import { projectOfCwd, sessionColor } from "@dev-tool-mcp/shared";
+import { projectOfCwd, sessionColor } from "@browser-mcp/shared";
 
 type PopupState = {
   bridgeStatus: "connected" | "disconnected" | "reconnecting";

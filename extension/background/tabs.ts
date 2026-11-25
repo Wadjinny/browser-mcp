@@ -3,7 +3,7 @@ import {
   bridgeError,
   type BridgeState,
   type TabInfo,
-} from "@dev-tool-mcp/shared";
+} from "@browser-mcp/shared";
 
 export function isRestrictedUrl(url: string | undefined | null): boolean {
   if (!url) return true;

@@ -2,7 +2,7 @@
  * Narrow right-edge panel listing pinned elements.
  */
 
-import { pinToUri, type PinDescriptor } from "@dev-tool-mcp/shared";
+import { pinToUri, type PinDescriptor } from "@browser-mcp/shared";
 import {
   clearPinElements,
   getPickMode,
@@ -16,15 +16,15 @@ import { onPickModeChanged, pickerCancel } from "./picker.js";
 
 export type PanelPin = PinDescriptor;
 
-const PANEL_ROOT_ID = "__dev_tool_mcp_pin_panel";
-const PANEL_HL_ID = "__dev_tool_mcp_pin_panel_hl";
-const PANEL_LABEL_ID = "__dev_tool_mcp_pin_panel_label";
-const PANEL_REFRESH_EVENT = "__dev_tool_mcp_refresh_panel";
+const PANEL_ROOT_ID = "__browser_mcp_pin_panel";
+const PANEL_HL_ID = "__browser_mcp_pin_panel_hl";
+const PANEL_LABEL_ID = "__browser_mcp_pin_panel_label";
+const PANEL_REFRESH_EVENT = "__browser_mcp_refresh_panel";
 
 let panelPins: PanelPin[] = [];
 
-if (typeof window !== "undefined" && !(window as unknown as { __devToolMcpPanelListener?: boolean }).__devToolMcpPanelListener) {
-  (window as unknown as { __devToolMcpPanelListener?: boolean }).__devToolMcpPanelListener =
+if (typeof window !== "undefined" && !(window as unknown as { __browserMcpPanelListener?: boolean }).__browserMcpPanelListener) {
+  (window as unknown as { __browserMcpPanelListener?: boolean }).__browserMcpPanelListener =
     true;
   window.addEventListener(PANEL_REFRESH_EVENT, () => {
     renderPanel();

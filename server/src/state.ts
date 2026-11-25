@@ -1,7 +1,7 @@
 import {
   emptyBridgeState,
   type BridgeState,
-} from "@dev-tool-mcp/shared";
+} from "@browser-mcp/shared";
 
 let state: BridgeState = emptyBridgeState();
 

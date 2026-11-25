@@ -1,5 +1,5 @@
 {
-  "name": "@dev-tool-mcp/extension",
+  "name": "@browser-mcp/extension",
   "version": "0.2.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@dev-tool-mcp/shared": "workspace:*"
+    "@browser-mcp/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.4",

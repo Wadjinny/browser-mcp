@@ -15,7 +15,7 @@ import {
   type ControlStatus,
   type RequestMessage,
   type ResponseMessage,
-} from "@dev-tool-mcp/shared";
+} from "@browser-mcp/shared";
 
 const STORAGE = {
   token: "handshakeToken",
@@ -28,7 +28,7 @@ const STORAGE = {
   pendingControlPort: "pendingControlPort",
 } as const;
 
-const CONTROL_NOTIFICATION_ID = "dev-tool-mcp-control";
+const CONTROL_NOTIFICATION_ID = "browser-mcp-control";
 
 export type DiscoveredBridge = {
   port: number;
@@ -88,7 +88,7 @@ type ConsentWaiter = {
   resolve: (answer: ConsentAnswer) => void;
   timer: ReturnType<typeof setTimeout>;
 };
-const CONSENT_PREFIX = "dev-tool-mcp-consent-";
+const CONSENT_PREFIX = "browser-mcp-consent-";
 const consentWaiters = new Map<string, ConsentWaiter>();
 let consentSeq = 0;
 
@@ -715,7 +715,7 @@ function identityFromDiscovered(bridge: DiscoveredBridge): BridgeIdentity {
 }
 
 /**
- * Whether the bridge on `port` self-declared `DEV_TOOL_MCP_AUTO_ALLOW`. Such
+ * Whether the bridge on `port` self-declared `BROWSER_MCP_AUTO_ALLOW`. Such
  * instances skip the Allow/Deny prompt for control-lease and connect-tab
  * requests (set only on instances trusted to drive the browser unattended).
  */
@@ -766,7 +766,7 @@ function resolvePending(): void {
 }
 
 async function waitForUserGrant(port: number): Promise<void> {
-  // Auto-allow instances (DEV_TOOL_MCP_AUTO_ALLOW) take control without a prompt
+  // Auto-allow instances (BROWSER_MCP_AUTO_ALLOW) take control without a prompt
   // — there may be no human present to answer the notification.
   if (isPortAutoAllowed(port)) {
     const previous = await getControllerPort();
@@ -801,7 +801,7 @@ async function waitForUserGrant(port: number): Promise<void> {
     await chrome.notifications.create(CONTROL_NOTIFICATION_ID, {
       type: "basic",
       iconUrl: chrome.runtime.getURL("icons/icon128.png"),
-      title: "dev-tool-mcp: control request",
+      title: "browser-mcp: control request",
       message: `${requesterLabel} wants to drive the browser.\nCurrently: ${holderLabel}`,
       buttons: [{ title: "Allow" }, { title: "Deny" }],
       requireInteraction: true,

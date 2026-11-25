@@ -9,16 +9,16 @@ import {
   setPicking,
 } from "./pin-store.js";
 
-const PANEL_REFRESH_EVENT = "__dev_tool_mcp_refresh_panel";
+const PANEL_REFRESH_EVENT = "__browser_mcp_refresh_panel";
 
 function refreshPinPanel(): void {
   window.dispatchEvent(new CustomEvent(PANEL_REFRESH_EVENT));
 }
 
-const OVERLAY_ROOT_ID = "__dev_tool_mcp_picker_root";
-const HIGHLIGHT_ID = "__dev_tool_mcp_picker_hl";
-const LABEL_ID = "__dev_tool_mcp_picker_label";
-const BANNER_ID = "__dev_tool_mcp_picker_banner";
+const OVERLAY_ROOT_ID = "__browser_mcp_picker_root";
+const HIGHLIGHT_ID = "__browser_mcp_picker_hl";
+const LABEL_ID = "__browser_mcp_picker_label";
+const BANNER_ID = "__browser_mcp_picker_banner";
 
 export type PickPayload = {
   pinId: string;
@@ -282,9 +282,9 @@ function isOverlayNode(node: EventTarget | null): boolean {
   if (root && root.contains(node)) return true;
   // Exclude pin panel + its highlight from pick targeting
   for (const id of [
-    "__dev_tool_mcp_pin_panel",
-    "__dev_tool_mcp_pin_panel_hl",
-    "__dev_tool_mcp_pin_panel_label",
+    "__browser_mcp_pin_panel",
+    "__browser_mcp_pin_panel_hl",
+    "__browser_mcp_pin_panel_label",
   ]) {
     const el = document.getElementById(id);
     if (el && el.contains(node)) return true;

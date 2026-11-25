@@ -17,19 +17,19 @@ type RefMap = Map<string, Element>;
 
 declare global {
   interface Window {
-    __devToolMcp?: {
+    __browserMcp?: {
       refs: RefMap;
       nextId: number;
     };
-    __devToolMcpListener?: boolean;
+    __browserMcpListener?: boolean;
   }
 }
 
 function state() {
-  if (!window.__devToolMcp) {
-    window.__devToolMcp = { refs: new Map(), nextId: 1 };
+  if (!window.__browserMcp) {
+    window.__browserMcp = { refs: new Map(), nextId: 1 };
   }
-  return window.__devToolMcp;
+  return window.__browserMcp;
 }
 
 /**
@@ -38,7 +38,7 @@ function state() {
  * user never re-enters the agent's context.
  */
 const secureFields = new WeakSet<Element>();
-const SECURE_ATTR = "data-dev-tool-mcp-secure";
+const SECURE_ATTR = "data-browser-mcp-secure";
 
 /** True for fields filled through browser_type_secure. */
 function isSecureField(el: Element): boolean {
@@ -673,10 +673,10 @@ function targetFromParams(params: Record<string, unknown>): TargetParams {
 }
 
 // Message bridge when registered as a content script (once per frame)
-if (!window.__devToolMcpListener) {
-  window.__devToolMcpListener = true;
+if (!window.__browserMcpListener) {
+  window.__browserMcpListener = true;
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (!msg || msg.channel !== "dev-tool-mcp") return false;
+    if (!msg || msg.channel !== "browser-mcp") return false;
     void (async () => {
       try {
         const { action, params } = msg as {

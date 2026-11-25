@@ -10,7 +10,7 @@ importers:
 
   extension:
     dependencies:
-      '@dev-tool-mcp/shared':
+      '@browser-mcp/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:
@@ -29,7 +29,7 @@ importers:
 
   server:
     dependencies:
-      '@dev-tool-mcp/shared':
+      '@browser-mcp/shared':
         specifier: workspace:*
         version: link:../shared
       '@modelcontextprotocol/sdk':

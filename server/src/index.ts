@@ -26,10 +26,10 @@ async function main(): Promise<void> {
   const announceListening = async (): Promise<void> => {
     await writePortFile(bridge.port);
     console.error(
-      `[dev-tool-mcp] Handshake token file: ${getTokenFilePath()}`,
+      `[browser-mcp] Handshake token file: ${getTokenFilePath()}`,
     );
     console.error(
-      `[dev-tool-mcp] Extension handshake: http://127.0.0.1:${bridge.port}/handshake`,
+      `[browser-mcp] Extension handshake: http://127.0.0.1:${bridge.port}/handshake`,
     );
   };
 
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
       await bridge.start();
       if (startFailureLogged) {
         console.error(
-          `[dev-tool-mcp] Bridge recovered on port ${bridge.port} after earlier port contention.`,
+          `[browser-mcp] Bridge recovered on port ${bridge.port} after earlier port contention.`,
         );
         startFailureLogged = false;
       }
@@ -50,11 +50,11 @@ async function main(): Promise<void> {
         // A bridge that cannot bind must not stop the MCP server from
         // starting: that would make the client drop every tool.
         console.error(
-          "[dev-tool-mcp] Bridge failed to start; serving MCP without browser connectivity:",
+          "[browser-mcp] Bridge failed to start; serving MCP without browser connectivity:",
           err instanceof Error ? err.message : err,
         );
         console.error(
-          `[dev-tool-mcp] Retrying every ${RETRY_BIND_MS / 1_000}s in case a discovery port frees up.`,
+          `[browser-mcp] Retrying every ${RETRY_BIND_MS / 1_000}s in case a discovery port frees up.`,
         );
       }
       return false;
@@ -90,7 +90,7 @@ async function main(): Promise<void> {
       clearInterval(retryTimer);
       retryTimer = null;
     }
-    console.error(`[dev-tool-mcp] Shutting down (${reason}).`);
+    console.error(`[browser-mcp] Shutting down (${reason}).`);
 
     // Never let a wedged socket keep the process (and its port) alive.
     const forceExit = setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS);
@@ -102,7 +102,7 @@ async function main(): Promise<void> {
       }
       await bridge.stop();
     } catch (err) {
-      console.error("[dev-tool-mcp] Shutdown error:", err);
+      console.error("[browser-mcp] Shutdown error:", err);
     } finally {
       clearTimeout(forceExit);
       process.exit(0);
@@ -120,6 +120,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("[dev-tool-mcp] Fatal:", err);
+  console.error("[browser-mcp] Fatal:", err);
   process.exit(1);
 });

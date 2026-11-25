@@ -79,7 +79,7 @@ async function buildOnce(): Promise<void> {
   mkdirSync(join(dist, "icons"), { recursive: true });
 
   const sharedAlias = {
-    "@dev-tool-mcp/shared": join(root, "../shared/src/index.ts"),
+    "@browser-mcp/shared": join(root, "../shared/src/index.ts"),
   };
 
   const common = {
@@ -132,7 +132,7 @@ await buildOnce();
 if (watch) {
   console.log("Watching extension sources…");
   const alias = {
-    "@dev-tool-mcp/shared": join(root, "../shared/src/index.ts"),
+    "@browser-mcp/shared": join(root, "../shared/src/index.ts"),
   };
   const modCtx = await esbuild.context({
     entryPoints: {

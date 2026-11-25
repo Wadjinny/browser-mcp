@@ -6,7 +6,7 @@
  * extension through a short-lived server after rebinding.
  *
  * Usage:
- *   DEV_TOOL_MCP_WS_PORT=17375 pnpm exec tsx live-test.mts
+ *   BROWSER_MCP_WS_PORT=17375 pnpm exec tsx live-test.mts
  *
  * For Cursor-managed server (port 17373), this script uses the MCP SDK
  * Client over a spawned stdio process on 17375 and expects you to flip
@@ -18,14 +18,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const port = process.env.DEV_TOOL_MCP_WS_PORT || "17375";
+const port = process.env.BROWSER_MCP_WS_PORT || "17375";
 
 const transport = new StdioClientTransport({
   command: "node",
   args: [path.join(__dirname, "dist", "index.js")],
   env: {
     ...process.env,
-    DEV_TOOL_MCP_WS_PORT: port,
+    BROWSER_MCP_WS_PORT: port,
   },
 });
 

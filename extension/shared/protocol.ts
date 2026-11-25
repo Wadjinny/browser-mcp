@@ -20,6 +20,6 @@ export {
   type ConsoleMessage,
   type NetworkEntry,
   type RpcMethod,
-} from "@dev-tool-mcp/shared";
+} from "@browser-mcp/shared";
 
-export { isCdpMethodAllowed } from "@dev-tool-mcp/shared";
+export { isCdpMethodAllowed } from "@browser-mcp/shared";

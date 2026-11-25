@@ -21,7 +21,7 @@ import {
   type RequestMessage,
   type ResponseMessage,
   type WelcomeMessage,
-} from "@dev-tool-mcp/shared";
+} from "@browser-mcp/shared";
 import {
   applyExtensionState,
   getBridgeState,
@@ -53,7 +53,7 @@ function envTimeout(name: string, fallback: number): number {
 const EXTENSION_WAIT_MS = 5_000;
 /** Chrome startup + extension boot can take a little while on a cold machine. */
 const CHROME_START_WAIT_MS = envTimeout(
-  "DEV_TOOL_MCP_CHROME_CONNECT_TIMEOUT_MS",
+  "BROWSER_MCP_CHROME_CONNECT_TIMEOUT_MS",
   25_000,
 );
 /** Do not block every tool call while Chrome is closed or the extension is off. */
@@ -88,7 +88,7 @@ function closeWithDeadline(
 }
 
 /**
- * Probe an in-use port to see whether the listener is another dev-tool-mcp
+ * Probe an in-use port to see whether the listener is another browser-mcp
  * bridge (rather than an unrelated process squatting on it).
  */
 async function probeBridge(
@@ -133,7 +133,7 @@ export class WsBridge {
   constructor(token: string, port = DEFAULT_WS_PORT) {
     this.token = token;
     this.preferredPort =
-      Number(process.env.DEV_TOOL_MCP_WS_PORT) || port || DEFAULT_WS_PORT;
+      Number(process.env.BROWSER_MCP_WS_PORT) || port || DEFAULT_WS_PORT;
   }
 
   /** Actually bound port; falls back to the preferred port before binding. */
@@ -152,8 +152,8 @@ export class WsBridge {
       startedAt: this.startedAt,
       port: this.port,
       preferredPort: this.preferredPort,
-      name: parseInstanceName(process.env.DEV_TOOL_MCP_NAME),
-      autoAllow: parseAutoAllow(process.env.DEV_TOOL_MCP_AUTO_ALLOW),
+      name: parseInstanceName(process.env.BROWSER_MCP_NAME),
+      autoAllow: parseAutoAllow(process.env.BROWSER_MCP_AUTO_ALLOW),
     };
   }
 
@@ -191,7 +191,7 @@ export class WsBridge {
     if (!this.isListening()) {
       throw (
         lastErr ??
-        new Error("No free port available in the dev-tool-mcp discovery band.")
+        new Error("No free port available in the browser-mcp discovery band.")
       );
     }
 
@@ -199,16 +199,16 @@ export class WsBridge {
       const owner = await probeBridge(this.preferredPort);
       console.error(
         owner
-          ? `[dev-tool-mcp] Port ${this.preferredPort} is owned by another dev-tool-mcp instance; bound ${this.port} instead.`
-          : `[dev-tool-mcp] Port ${this.preferredPort} is in use by an unrelated process; bound ${this.port} instead.`,
+          ? `[browser-mcp] Port ${this.preferredPort} is owned by another browser-mcp instance; bound ${this.port} instead.`
+          : `[browser-mcp] Port ${this.preferredPort} is in use by an unrelated process; bound ${this.port} instead.`,
       );
       console.error(
-        `[dev-tool-mcp] This instance is on port ${this.port}; mutating tools will request control via a Chrome notification (or the popup Control button).`,
+        `[browser-mcp] This instance is on port ${this.port}; mutating tools will request control via a Chrome notification (or the popup Control button).`,
       );
     }
 
     console.error(
-      `[dev-tool-mcp] WebSocket bridge listening on ws://127.0.0.1:${this.port}`,
+      `[browser-mcp] WebSocket bridge listening on ws://127.0.0.1:${this.port}`,
     );
   }
 
@@ -247,7 +247,7 @@ export class WsBridge {
 
     // Keep a permanent guard so a later listener error cannot crash the server.
     wss.on("error", (err: Error) => {
-      console.error(`[dev-tool-mcp] WS server error: ${err.message}`);
+      console.error(`[browser-mcp] WS server error: ${err.message}`);
     });
 
     const addr = httpServer.address();
@@ -353,25 +353,25 @@ export class WsBridge {
     if (this.stopped || !this.isListening()) return;
 
     console.error(
-      "[dev-tool-mcp] Chrome is not running; launching it so the extension can connect…",
+      "[browser-mcp] Chrome is not running; launching it so the extension can connect…",
     );
     const result = await launchBrowser();
     if (!result.launched) {
       console.error(
-        `[dev-tool-mcp] Could not launch Chrome: ${result.error ?? "unknown error"}. ` +
-          "Set DEV_TOOL_MCP_CHROME_BIN to the browser executable, or start Chrome manually.",
+        `[browser-mcp] Could not launch Chrome: ${result.error ?? "unknown error"}. ` +
+          "Set BROWSER_MCP_CHROME_BIN to the browser executable, or start Chrome manually.",
       );
       return;
     }
     console.error(
-      `[dev-tool-mcp] Launched Chrome (${result.command}); waiting for the extension…`,
+      `[browser-mcp] Launched Chrome (${result.command}); waiting for the extension…`,
     );
     if (await this.waitForExtension(CHROME_START_WAIT_MS)) {
-      console.error("[dev-tool-mcp] Chrome extension connected.");
+      console.error("[browser-mcp] Chrome extension connected.");
     } else if (!this.stopped) {
       console.error(
-        "[dev-tool-mcp] Chrome started but the extension did not connect. " +
-          "Make sure dev-tool-mcp is loaded in that profile (chrome://extensions).",
+        "[browser-mcp] Chrome started but the extension did not connect. " +
+          "Make sure browser-mcp is loaded in that profile (chrome://extensions).",
       );
     }
   }
@@ -400,7 +400,7 @@ export class WsBridge {
     if (!this.isListening()) {
       throw Object.assign(
         new Error(
-          `Bridge is not listening: port ${this.preferredPort} was unavailable at startup, so the extension cannot reach this instance. Close the other dev-tool-mcp instance (usually another Claude Code session) and restart this one.`,
+          `Bridge is not listening: port ${this.preferredPort} was unavailable at startup, so the extension cannot reach this instance. Close the other browser-mcp instance (usually another Claude Code session) and restart this one.`,
         ),
         { code: ErrorCodes.EXTENSION_DISCONNECTED },
       );
@@ -415,7 +415,7 @@ export class WsBridge {
     if (!this.isExtensionConnected() || !this.socket) {
       const detail =
         this.port === this.preferredPort
-          ? "Extension is not connected. Chrome was either not running (and could not be launched) or dev-tool-mcp is not loaded/enabled in Chrome."
+          ? "Extension is not connected. Chrome was either not running (and could not be launched) or browser-mcp is not loaded/enabled in Chrome."
           : `Extension is not connected. This instance listens on ${this.port}, not the default ${this.preferredPort}. Reload the extension or wait for discovery to attach this port.`;
       const err = Object.assign(
         new Error(bridgeError(ErrorCodes.EXTENSION_DISCONNECTED, detail).message),
@@ -568,7 +568,7 @@ export class WsBridge {
       this.activePort = parsed.activePort;
       if (previous !== this.activePort) {
         console.error(
-          `[dev-tool-mcp] Extension is controlling port ${this.activePort}` +
+          `[browser-mcp] Extension is controlling port ${this.activePort}` +
             (this.authorized ? " (this instance)." : ` (not this instance, ${this.port}).`),
         );
       }
@@ -615,7 +615,7 @@ export class WsBridge {
     });
 
     ws.on("error", (err) => {
-      console.error("[dev-tool-mcp] WS error:", err.message);
+      console.error("[browser-mcp] WS error:", err.message);
     });
   }
 
@@ -707,10 +707,10 @@ export class WsBridge {
       this.activePort = payload.controllerPort;
       console.error(
         payload.controllerPort == null
-          ? "[dev-tool-mcp] Extension released browser control."
+          ? "[browser-mcp] Extension released browser control."
           : payload.controllerPort === this.port
-            ? `[dev-tool-mcp] This instance now controls the browser (${payload.reason}).`
-            : `[dev-tool-mcp] Extension is controlling port ${payload.controllerPort} (${payload.reason}).`,
+            ? `[browser-mcp] This instance now controls the browser (${payload.reason}).`
+            : `[browser-mcp] Extension is controlling port ${payload.controllerPort} (${payload.reason}).`,
       );
     }
   }

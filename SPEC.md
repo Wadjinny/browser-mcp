@@ -1,4 +1,4 @@
-# SPEC: dev-tool-mcp
+# SPEC: browser-mcp
 
 Chrome Manifest V3 extension + TypeScript MCP server that lets an AI agent automate and inspect the user's real Chrome browser (logged-in profile), with explicit per-tab Connect control and hybrid page automation + DevTools (CDP) access.
 
@@ -34,7 +34,7 @@ Agents in Cursor (and similar MCP hosts) can already drive browsers via Playwrig
 
 ### Parity vs differentiation
 
-| Aspect | Browser MCP | dev-tool-mcp |
+| Aspect | Browser MCP | browser-mcp |
 |--------|-------------|--------------|
 | Real Chrome profile | Yes | Yes |
 | Popup Connect / Disconnect tab | Yes | Yes (same job: gate which tab the agent may touch) |
@@ -85,8 +85,8 @@ sequenceDiagram
 1. **Localhost only**: WebSocket listens on `127.0.0.1` (never `0.0.0.0`).
 2. **Connect gate**: Page-affecting commands require a Connected tab. The user can Connect from the popup, or the agent can `browser_open` / `browser_navigate` a non-restricted URL (creates a tab and Connects it). Restricted URLs (`chrome://`, Web Store, …) are always rejected.
 3. **Per-port handshake token**: Each MCP instance has its own token (file, env, or generated). The extension fetches `GET /handshake` **per port** and stores `tokensByPort`. A mismatch closes only that socket.
-4. **Per-session tabs**: The extension keeps a WebSocket to every discovered instance (ports 17373–17392, max 20). Each session owns at most one Connected tab and all tab-scoped RPCs act only on it. `browser_connect_tab` on a tab owned by another session asks the user to Allow/Deny. Optional display name via `DEV_TOOL_MCP_NAME`.
-   - **Auto-allow**: an instance started with `DEV_TOOL_MCP_AUTO_ALLOW=1` advertises `autoAllow: true` in its `/health` identity. For that instance the extension grants control-lease and `browser_connect_tab` requests without a prompt, so headless/unattended sessions work when no human can click Allow/Deny. Opt-in, per-instance, default off; the flag is self-declared (a convenience for the user's own trusted localhost sessions, not a trust boundary — the `127.0.0.1` bind and per-port handshake token are). All other instances keep the prompt.
+4. **Per-session tabs**: The extension keeps a WebSocket to every discovered instance (ports 17373–17392, max 20). Each session owns at most one Connected tab and all tab-scoped RPCs act only on it. `browser_connect_tab` on a tab owned by another session asks the user to Allow/Deny. Optional display name via `BROWSER_MCP_NAME`.
+   - **Auto-allow**: an instance started with `BROWSER_MCP_AUTO_ALLOW=1` advertises `autoAllow: true` in its `/health` identity. For that instance the extension grants control-lease and `browser_connect_tab` requests without a prompt, so headless/unattended sessions work when no human can click Allow/Deny. Opt-in, per-instance, default off; the flag is self-declared (a convenience for the user's own trusted localhost sessions, not a trust boundary — the `127.0.0.1` bind and per-port handshake token are). All other instances keep the prompt.
 5. **No cloud**: Browser content stays on the machine; MCP host (Cursor) still receives tool results in its context by design of MCP.
 6. **Secure input**: `browser_type_secure` opens a dedicated extension window (`chrome-extension://…/secure/secure.html`) — not an in-page overlay, so the page's scripts cannot read what is being typed. The value goes from that window straight to the service worker and content script, which type it into the Connected tab. It is never a tool argument, tool result, log line, or snapshot value. The tool returns only `{ filled, chars, submitted }`, and fields filled this way are redacted in later snapshots/find results. This protects the secret from the agent, not from the destination page, which receives it normally.
 
@@ -159,13 +159,13 @@ server/
 
 ### WebSocket protocol
 
-- **Transport**: `ws://127.0.0.1:<port>` (default port **17373**, overridable via env `DEV_TOOL_MCP_WS_PORT`). The extension connects to **every** instance in the discovery band (17373–17392).
-- **Browser startup**: when a tool needs the extension and none is connected, the server waits briefly for a reconnect. If no Chrome process is running it launches Chrome with the user's normal profile (so the installed extension keeps its permissions), then waits up to `DEV_TOOL_MCP_CHROME_CONNECT_TIMEOUT_MS` (default 25 s). Disable with `DEV_TOOL_MCP_LAUNCH_CHROME=0`; configure with `DEV_TOOL_MCP_CHROME_BIN`, `DEV_TOOL_MCP_CHROME_PROFILE`, `DEV_TOOL_MCP_CHROME_USER_DATA_DIR`, `DEV_TOOL_MCP_CHROME_ARGS`, and `DEV_TOOL_MCP_CHROME_EXTENSION`.
+- **Transport**: `ws://127.0.0.1:<port>` (default port **17373**, overridable via env `BROWSER_MCP_WS_PORT`). The extension connects to **every** instance in the discovery band (17373–17392).
+- **Browser startup**: when a tool needs the extension and none is connected, the server waits briefly for a reconnect. If no Chrome process is running it launches Chrome with the user's normal profile (so the installed extension keeps its permissions), then waits up to `BROWSER_MCP_CHROME_CONNECT_TIMEOUT_MS` (default 25 s). Disable with `BROWSER_MCP_LAUNCH_CHROME=0`; configure with `BROWSER_MCP_CHROME_BIN`, `BROWSER_MCP_CHROME_PROFILE`, `BROWSER_MCP_CHROME_USER_DATA_DIR`, `BROWSER_MCP_CHROME_ARGS`, and `BROWSER_MCP_CHROME_EXTENSION`.
 - **Framing**: one JSON object per WebSocket message (text frames).
 - **Direction**:
   - Server → extension: `request`
   - Extension → server: `response` | `event`
-- **Identity**: `BridgeIdentity.name` from `DEV_TOOL_MCP_NAME` (optional). Display label is `name :port` (name falls back to the cwd project folder).
+- **Identity**: `BridgeIdentity.name` from `BROWSER_MCP_NAME` (optional). Display label is `name :port` (name falls back to the cwd project folder).
 
 #### Request
 
@@ -257,7 +257,7 @@ Job of the popup: **choose which tab the agent may control**, and show bridge he
 
 ```
 ┌─────────────────────────────────────┐
-│  dev-tool-mcp                       │
+│  browser-mcp                       │
 │  MCP bridge: ● Connected / ○ …      │
 ├─────────────────────────────────────┤
 │  This tab                           │
@@ -299,7 +299,7 @@ Job of the popup: **choose which tab the agent may control**, and show bridge he
 ```json
 {
   "manifest_version": 3,
-  "name": "dev-tool-mcp",
+  "name": "browser-mcp",
   "version": "0.1.0",
   "description": "Let a local MCP agent automate and inspect a Connected Chrome tab.",
   "permissions": [
@@ -316,7 +316,7 @@ Job of the popup: **choose which tab the agent may control**, and show bridge he
   ],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background/sw.js", "type": "module" },
-  "action": { "default_popup": "popup/popup.html", "default_title": "dev-tool-mcp" },
+  "action": { "default_popup": "popup/popup.html", "default_title": "browser-mcp" },
   "content_scripts": []
 }
 ```
@@ -667,7 +667,7 @@ Stable `error.code` values returned through MCP tool errors:
 | `CONTROL_REQUEST_TIMEOUT` | Allow/Deny notification expired (~60s) |
 | `CONTROL_REQUEST_PENDING` | Another instance already has a steal prompt open |
 
-Messages should be short and actionable (e.g. “Open the dev-tool-mcp popup and click Connect on the target tab.”).
+Messages should be short and actionable (e.g. “Open the browser-mcp popup and click Connect on the target tab.”).
 
 ---
 
@@ -678,12 +678,12 @@ After `server` is packaged (implementation phase):
 ```json
 {
   "mcpServers": {
-    "dev-tool-mcp": {
+    "browser-mcp": {
       "command": "npx",
-      "args": ["tsx", "/absolute/path/to/dev-tool-mcp/server/src/index.ts"],
+      "args": ["tsx", "/absolute/path/to/browser-mcp/server/src/index.ts"],
       "env": {
-        "DEV_TOOL_MCP_WS_PORT": "17373",
-        "DEV_TOOL_MCP_NAME": "my-project"
+        "BROWSER_MCP_WS_PORT": "17373",
+        "BROWSER_MCP_NAME": "my-project"
       }
     }
   }
